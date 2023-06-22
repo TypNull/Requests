@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Title>Shard.Requests</Title>
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <Authors>Meyn</Authors>
+    <Company>Shard</Company>
+    <Description>Requests is a C# .NET6 library for handling requests in a parallel async state. It includes a priority channel for efficient handling and can be used for HTTP requests or other CPU-intensive tasks. Features include retry functions, priority settings, and notification delegates. The package also includes classes for expanding functionality.</Description>
+    <Copyright>Shard © 2023</Copyright>
+    <PackageProjectUrl></PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>async; channel; priority; request; parallel; </PackageTags>
+    <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
+    <PackageIcon>logo.png</PackageIcon>
+    <Version>0.1.0</Version>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageId>Shard.Requests</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\LICENSE.txt">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\logo.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
+</Project>
