@@ -51,7 +51,10 @@ namespace Requests
         /// </summary>
         public CancellationToken CT => _cts.Token;
 
-        internal static RequestHandler[] MainRequestHandlers { get; } = new RequestHandler[] { new(), new() };
+        /// <summary>
+        /// Two main handlers to handel requests.
+        /// </summary>
+        public static RequestHandler[] MainRequestHandlers { get; } = new RequestHandler[] { new(), new() };
 
         /// <summary>
         /// Requests that are not yet Handeled

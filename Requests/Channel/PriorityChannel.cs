@@ -350,10 +350,8 @@ namespace Requests.Channel
                 cancellationToken.IsCancellationRequested ? new ValueTask(Task.FromCanceled(cancellationToken)) :
                 TryWrite(item) ? default :
                 new ValueTask(Task.FromException(ChannelUtilities.CreateInvalidCompletionException(_parent._doneWriting)));
-
-
-
         }
+
         /// <summary>
         /// Creates a Array out the actual members of this Channel
         /// </summary>

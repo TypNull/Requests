@@ -12,8 +12,8 @@ Requests is an efficient and organized solution that simplifies the process of h
 ## Installation
 
 You can install Requests by searching for "Requests" in the NuGet Package Manager.
-[Nuget](https://www.nuget.org/packages/Shard.Requests)
-[GitHub](https://github.com/TypNull/Requests)
+ - [Nuget](https://www.nuget.org/packages/Shard.Requests)
+ - [GitHub](https://github.com/TypNull/Requests)
 
 ## Usage
 
@@ -23,7 +23,7 @@ To use Requests, first import the library:
 using Shard.Requests;
 ```
 
-Then, create a Request object and it will automaticly be added to the `RequestHandler`
+Then, create a Request object and it will automaticly be added to the `RequestHandler`.
 If a request fails, the RequestHandler will automatically retry the request according to the retry settings specified.
 
 ## Classes
