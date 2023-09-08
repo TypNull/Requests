@@ -1,35 +1,35 @@
 ﻿namespace Requests.Options
 {/// <summary>
- /// Indicates the state of a <see cref="RequestObject"/>.
+ /// Indicates the state of a <see cref="IRequest"/>.
  /// </summary>
     public enum RequestState
     {
         /// <summary>
-        /// <see cref="RequestObject"/> can be started.
+        /// <see cref="IRequest"/> can be started.
         /// </summary>
         Available,
         /// <summary>
-        /// <see cref="RequestObject"/> is running.
+        /// <see cref="IRequest"/> is running.
         /// </summary>
         Running,
         /// <summary>
-        /// <see cref="RequestObject"/> is sucessfuly compleated.
+        /// <see cref="IRequest"/> is sucessfuly compleated.
         /// </summary>
         Compleated,
         /// <summary>
-        /// <see cref="RequestObject"/> is paused.
+        /// <see cref="IRequest"/> is paused.
         /// </summary>
         Onhold,
         /// <summary>
-        /// <see cref="RequestObject"/> is cancelled.
+        /// <see cref="IRequest"/> is cancelled.
         /// </summary>
         Waiting,
         /// <summary>
-        /// <see cref="RequestObject"/> is cancelled.
+        /// <see cref="IRequest"/> is cancelled.
         /// </summary>
         Cancelled,
         /// <summary>
-        /// <see cref="RequestObject"/> failed.
+        /// <see cref="IRequest"/> failed.
         /// </summary>
         Failed
     }

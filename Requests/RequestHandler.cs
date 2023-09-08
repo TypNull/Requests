@@ -11,7 +11,7 @@ namespace Requests
         /// <summary>
         /// Priority Channel that holds all Requests
         /// </summary>
-        private readonly PriorityChannel<RequestObject> _requestsChannel = new(3);
+        private readonly PriorityChannel<IRequest> _requestsChannel = new(3);
 
         /// <summary>
         /// Indicates if the <see cref="RequestHandler"/> is running.
@@ -47,7 +47,7 @@ namespace Requests
         private CancellationTokenSource _cts = new();
         private readonly PauseTokenSource _pts = new();
         /// <summary>
-        /// Main <see cref="CancellationToken"/> for all <see cref="RequestObject.RequestObject"/>s.
+        /// Main <see cref="CancellationToken"/> for all <see cref="IRequest.IRequestObject"/>s.
         /// </summary>
         public CancellationToken CT => _cts.Token;
 
@@ -65,7 +65,7 @@ namespace Requests
         /// Constructor for <see cref="RequestHandler"/> class.
         /// </summary>
         /// <param name="requests">Requests that sould be added</param>
-        public RequestHandler(params RequestObject[] requests)
+        public RequestHandler(params IRequest[] requests)
         {
             AddRequest(requests);
             _requestsChannel.Options.EasyEndToken = _pts.Token;
@@ -76,7 +76,7 @@ namespace Requests
         /// Adds Requests to the handler
         /// </summary>
         /// <param name="request">Requests that sould be added</param>
-        public void AddRequest(RequestObject request)
+        public void AddRequest(IRequest request)
         => _ = _requestsChannel.Writer.WriteAsync(new((int)request.Priority, request)).AsTask();
 
 
@@ -84,7 +84,7 @@ namespace Requests
         /// Adds Requests to the handler
         /// </summary>
         /// <param name="requests">Requests that sould be added</param>
-        public void AddRequest(params RequestObject[] requests)
+        public void AddRequest(params IRequest[] requests)
         => Array.ForEach(requests, request => _ = _requestsChannel.Writer.WriteAsync(new((int)request.Priority, request)).AsTask());
 
 
@@ -92,7 +92,7 @@ namespace Requests
         /// Runs the Request and adds Requests
         /// </summary>
         /// <param name="request">Requests that sould be added</param>
-        public void RunRequests(RequestObject request)
+        public void RunRequests(IRequest request)
         {
             AddRequest(request);
             RunRequests();
@@ -102,7 +102,7 @@ namespace Requests
         /// Runs the Request and adds Requests
         /// </summary>
         /// <param name="requests">Requests that sould be added</param>
-        public void RunRequests(params RequestObject[] requests)
+        public void RunRequests(params IRequest[] requests)
         {
             AddRequest(requests);
             RunRequests();
@@ -189,9 +189,9 @@ namespace Requests
                 RunRequests();
         }
 
-        private async Task HandleRequests(PriorityItem<RequestObject> pair)
+        private async Task HandleRequests(PriorityItem<IRequest> pair)
         {
-            RequestObject request = pair.Item;
+            IRequest request = pair.Item;
             await request.StartRequestAsync();
 
             if (request.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)

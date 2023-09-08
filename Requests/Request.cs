@@ -9,7 +9,7 @@ namespace Requests
     /// <typeparam name="TOptions">Type of options</typeparam>
     /// <typeparam name="TCompleated">Type of compleated return</typeparam>
     /// <typeparam name="TFailed">Type of failed return</typeparam>
-    public abstract class Request<TOptions, TCompleated, TFailed> : RequestObject where TOptions : RequestOptions<TCompleated, TFailed>, new()
+    public abstract class Request<TOptions, TCompleated, TFailed> : IRequest where TOptions : RequestOptions<TCompleated, TFailed>, new()
     {
         /// <summary>
         /// If this object is disposed of.
@@ -19,7 +19,7 @@ namespace Requests
         /// <summary>
         /// How often this <see cref="Request{TOptions, TCompleated, TFailed}"/> failded.
         /// </summary>
-        public byte AttemptCounter { get; private set; }
+        public virtual int AttemptCounter { get; private set; }
 
         /// <summary>
         /// The <see cref="CancellationTokenSource"/> for this object.
@@ -69,12 +69,12 @@ namespace Requests
         /// <summary>
         /// <see cref="System.Threading.Tasks.Task"/> that indicates of this <see cref="Request{TOptions, TCompleated, TFailed}"/> finished.
         /// </summary>
-        public override Task Task => _isFinished.Task;
+        public virtual Task Task => _isFinished.Task;
 
         /// <summary>
         /// <see cref="AggregateException"/> that contains the throwed Exeptions
         /// </summary>
-        public override AggregateException? Exception => _exceptions.Count == 0 ? null : new AggregateException(_exceptions);
+        public virtual AggregateException? Exception => _exceptions.Count == 0 ? null : new AggregateException(_exceptions);
 
         /// <summary>
         /// Delays the start of the <see cref="Request{TOptions, TCompleated, TFailed}"/> on every Start call for the specified number of milliseconds.
@@ -87,7 +87,7 @@ namespace Requests
         /// <summary>
         /// The <see cref="RequestState"/> of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
-        public override RequestState State
+        public virtual RequestState State
         {
             get => _state; protected set
             {
@@ -106,7 +106,7 @@ namespace Requests
         /// <summary>
         /// If the <see cref="Request{TOptions, TCompleated, TFailed}"/> has priority over other not prioritized <see cref="Request{TOptions, TCompleated, TFailed}">Requests</see>.
         /// </summary>
-        public override RequestPriority Priority => Options.Priority;
+        public virtual RequestPriority Priority => Options.Priority;
 
         /// <summary>
         /// Consructor of the <see cref="Request{TOptions, TCompleated, TFailed}"/> class 
@@ -139,7 +139,7 @@ namespace Requests
         /// /// <exception cref="AggregateException"></exception>
         /// /// <exception cref="ObjectDisposedException"></exception>
         /// /// <exception cref="InvalidOperationException"></exception>
-        public override void Cancel()
+        public virtual void Cancel()
         {
             if (State == RequestState.Cancelled)
                 return;
@@ -150,6 +150,13 @@ namespace Requests
         }
 
         /// <summary>
+        /// Wait to finish this <see cref="IRequest"/>.
+        /// </summary>
+        /// <exception cref="AggregateException"></exception>
+        /// <exception cref="ObjectDisposedException"></exception>
+        public virtual void Wait() => Task.Wait();
+
+        /// <summary>
         /// Dispose the <see cref="Request{TOptions, TCompleated, TFailed}"/>. 
         /// Will be called automaticly by the <see cref="RequestHandler"/>.
         /// </summary>
@@ -157,7 +164,7 @@ namespace Requests
         /// <exception cref="ArgumentException"></exception>
         /// <exception cref="ObjectDisposedException"></exception>
         /// <exception cref="InvalidOperationException"></exception>
-        public override void Dispose()
+        public virtual void Dispose()
         {
             if (State == RequestState.Running)
                 Cancel();
@@ -184,7 +191,7 @@ namespace Requests
         /// <summary>
         /// Runs the <see cref="Request{TOptions, TCompleated, TFailed}"/> that was created out this object
         /// </summary>
-        internal override async Task StartRequestAsync()
+        async Task IRequest.StartRequestAsync()
         {
             if (State != RequestState.Available || Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested)
                 return;
@@ -199,7 +206,7 @@ namespace Requests
 
             RequestReturn returnItem = new();
 
-            _ = Options.RequestStarted?.BeginInvoke(null, null);
+            _ = Task.Run(() => Options.RequestStarted?.Invoke());
             try
             {
                 returnItem = await RunRequestAsync();
@@ -280,7 +287,7 @@ namespace Requests
         /// <summary>
         /// Start the <see cref="Request{TOptions, TCompleated, TFailed}"/> if it is not yet started or paused.
         /// </summary>
-        public override void Start()
+        public virtual void Start()
         {
             if (State != RequestState.Onhold)
                 return;
@@ -309,7 +316,7 @@ namespace Requests
         /// <summary>
         /// Set the <see cref="Request{TOptions, TCompleated, TFailed}"/> on hold.
         /// </summary>
-        public override void Pause() => State = RequestState.Onhold;
+        public virtual void Pause() => State = RequestState.Onhold;
 
         /// <summary>
         /// Class that holds the return and notification objects.

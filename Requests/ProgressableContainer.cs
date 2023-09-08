@@ -4,7 +4,7 @@
     /// Combinies Requests and the Progressors of these
     /// </summary>
     /// <typeparam name="TRequest"></typeparam>
-    public class ProgressableContainer<TRequest> : RequestContainer<TRequest> where TRequest : RequestObject, IProgressable
+    public class ProgressableContainer<TRequest> : RequestContainer<TRequest> where TRequest : IRequest, IProgressable
     {
         /// <summary>
         /// Mearged Progress of all Requests.
@@ -18,9 +18,9 @@
         public ProgressableContainer() { }
 
         /// <summary>
-        /// Constructor to merge <see cref="RequestObject"/> together
+        /// Constructor to merge <see cref="IRequest"/> together
         /// </summary>
-        /// <param name="requests"><see cref="RequestObject"/>s to merge</param>
+        /// <param name="requests"><see cref="IRequest"/>s to merge</param>
         public ProgressableContainer(params TRequest[] requests) => Add(requests);
 
         /// <summary>
@@ -39,9 +39,9 @@
         }
 
         /// <summary>
-        /// Adds a <see cref="RequestObject"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// Adds a <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
-        /// <param name="request">The <see cref="RequestObject"/> to add.</param>
+        /// <param name="request">The <see cref="IRequest"/> to add.</param>
         public new void Add(TRequest request)
         {
             base.Add(request);
@@ -70,9 +70,9 @@
         //}
 
         /// <summary>
-        /// Adds a range <see cref="RequestObject"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// Adds a range <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
-        /// <param name="requests">The <see cref="RequestObject"/> to add.</param>
+        /// <param name="requests">The <see cref="IRequest"/> to add.</param>
         public override void Add(params TRequest[] requests)
         {
             base.Add(requests);
@@ -80,7 +80,7 @@
         }
 
         /// <summary>
-        /// Removes a <see cref="RequestObject"/> from this container.
+        /// Removes a <see cref="IRequest"/> from this container.
         /// </summary>
         /// <param name="requests">Request to remove</param>
         public override void Remove(params TRequest[] requests)

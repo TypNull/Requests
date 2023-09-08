@@ -6,7 +6,7 @@ namespace Requests
     /// Class to manage and merge more than one TRequest.
     /// </summary>
     /// <typeparam name="TRequest">A RequestObject class</typeparam>
-    public class RequestContainer<TRequest> : RequestObject where TRequest : RequestObject
+    public class RequestContainer<TRequest> : IRequest where TRequest : IRequest
     {
         private readonly List<TRequest> _requests = new();
         private bool _isrunning = true;
@@ -17,33 +17,47 @@ namespace Requests
         /// <summary>
         /// Merged task out the requests
         /// </summary>
-        public override Task Task => _task;
+        public Task Task => _task;
 
         /// <summary>
         /// State of this <see cref="RequestContainer{TRequest}"/>
         /// </summary>
-        public override RequestState State { get => RequestState.Running; protected set { } }
+        public RequestState State
+        {
+            get
+            {
+                if (_requests.Any(x => x.State == RequestState.Failed))
+                    return RequestState.Failed;
+                else if (_requests.Any(x => x.State == RequestState.Running))
+                    return RequestState.Running;
+                else if (_requests.All(x => x.State == RequestState.Compleated))
+                    return RequestState.Compleated;
+                else if (_requests.All(x => x.State == RequestState.Onhold))
+                    return RequestState.Onhold;
+                else return RequestState.Available;
+            }
+        }
 
         /// <summary>
         /// Priority is unnessesary but always Normal
         /// </summary>
-        public override RequestPriority Priority => RequestPriority.Normal;
+        public RequestPriority Priority => RequestPriority.Normal;
 
         /// <summary>
         /// All exceptions that were risen by the requests
         /// </summary>
-        public override AggregateException? Exception => new(_requests.Where(x => x.Exception != null).Select(x => x.Exception!));
+        public AggregateException? Exception => new(_requests.Where(x => x.Exception != null).Select(x => x.Exception!));
 
         /// <summary>
-        /// Constructor to merge <see cref="RequestObject"/> together
+        /// Constructor to merge <see cref="IRequest"/> together
         /// </summary>
-        /// <param name="requests"><see cref="RequestObject"/>s to merge</param>
+        /// <param name="requests"><see cref="IRequest"/>s to merge</param>
         public RequestContainer(params TRequest[] requests) => Add(requests);
 
         /// <summary>
-        /// Get all <see cref="RequestObject"/> in this Container
+        /// Get all <see cref="IRequest"/> in this Container
         /// </summary>
-        /// <returns>returns a <see cref="RequestObject"/> array</returns>
+        /// <returns>returns a <see cref="IRequest"/> array</returns>
         public IReadOnlyList<TRequest> GetRequests() => _requests;
 
         /// <summary>
@@ -65,9 +79,9 @@ namespace Requests
         { }
 
         /// <summary>
-        /// Adds a <see cref="RequestObject"/> to the <see cref="RequestContainer{TRequest}"/>.
+        /// Adds a <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
-        /// <param name="request">The <see cref="RequestObject"/> to add.</param>
+        /// <param name="request">The <see cref="IRequest"/> to add.</param>
         public virtual void Add(TRequest request)
         {
             if (_isCanceled)
@@ -81,7 +95,7 @@ namespace Requests
             _task = Task.WhenAll(_requests.Select(request => request.Task));
         }
 
-        internal override async Task StartRequestAsync()
+        async Task IRequest.StartRequestAsync()
         {
             _isrunning = true;
             foreach (TRequest? request in _requests)
@@ -89,9 +103,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Adds a range <see cref="RequestObject"/> to the <see cref="RequestContainer{TRequest}"/>.
+        /// Adds a range <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
-        /// <param name="requests">The <see cref="RequestObject"/> to add.</param>
+        /// <param name="requests">The <see cref="IRequest"/> to add.</param>
         public virtual void Add(params TRequest[] requests)
         {
             if (_isCanceled)
@@ -106,7 +120,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Removes a <see cref="RequestObject"/> from this container.
+        /// Removes a <see cref="IRequest"/> from this container.
         /// </summary>
         /// <param name="requests">Request to remove</param>
         public virtual void Remove(params TRequest[] requests)
@@ -118,25 +132,25 @@ namespace Requests
         /// <summary>
         /// Cancel all <see cref="Request{TOptions, TCompleated, TFailed}"/> in container
         /// </summary>
-        public override void Cancel()
+        public void Cancel()
         {
             _isCanceled = true;
             _requests.ForEach(request => request.Cancel());
         }
 
         /// <summary>
-        /// Starts all <see cref="RequestObject"/> if they are on hold
+        /// Starts all <see cref="IRequest"/> if they are on hold
         /// </summary>
-        public override void Start()
+        public void Start()
         {
             _isrunning = true;
             foreach (TRequest? request in _requests)
                 request.Start();
         }
         /// <summary>
-        /// Put every <see cref="RequestObject"/> in Container on hold
+        /// Put every <see cref="IRequest"/> in Container on hold
         /// </summary>
-        public override void Pause()
+        public void Pause()
         {
             _isrunning = false;
             foreach (TRequest? request in _requests)
@@ -146,7 +160,7 @@ namespace Requests
         /// <summary>
         /// Dispose all requests in container
         /// </summary>
-        public override void Dispose()
+        public void Dispose()
         {
             if (_disposed)
                 return;
