@@ -6,7 +6,7 @@
     public interface IProgressable
     {
         /// <summary>
-        /// Progress to return the progress value
+        /// Progress object to return the progress value
         /// </summary>
         public Progress<float> Progress { get; }
     }
