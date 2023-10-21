@@ -7,7 +7,7 @@
         /// <summary>
         /// <see cref="IRequest"/> can be started.
         /// </summary>
-        Available,
+        Idle,
         /// <summary>
         /// <see cref="IRequest"/> is running.
         /// </summary>
@@ -19,7 +19,7 @@
         /// <summary>
         /// <see cref="IRequest"/> is paused.
         /// </summary>
-        Onhold,
+        Paused,
         /// <summary>
         /// <see cref="IRequest"/> is cancelled.
         /// </summary>

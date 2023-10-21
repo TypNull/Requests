@@ -28,16 +28,16 @@
         public TimeSpan? DelayBetweenAttemps { get; set; } = null;
 
         ///<inheritdoc />
-        public NotifyVoid? RequestStarted { get; set; }
+        public Notify<IRequest>? RequestStarted { get; set; }
 
         ///<inheritdoc />
-        public Notify<TCompleated>? RequestCompleated { get; set; }
+        public Notify<IRequest, TCompleated>? RequestCompleated { get; set; }
 
         ///<inheritdoc />
-        public Notify<TFailed>? RequestFailed { get; set; }
+        public Notify<IRequest, TFailed>? RequestFailed { get; set; }
 
         ///<inheritdoc />
-        public NotifyVoid? RequestCancelled { get; set; }
+        public Notify<IRequest>? RequestCancelled { get; set; }
 
         /// <summary>
         /// Copy constructor for the record <see cref="RequestOptions{TCompleated, TFailed}"/>

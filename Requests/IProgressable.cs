@@ -3,7 +3,7 @@
     /// <summary>
     /// Interface to that contains a progress object
     /// </summary>
-    public interface IProgressable
+    public interface IProgressableRequest : IRequest
     {
         /// <summary>
         /// Progress object to return the progress value

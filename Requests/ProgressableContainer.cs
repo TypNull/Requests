@@ -4,7 +4,7 @@
     /// Combinies Requests and the Progressors of these
     /// </summary>
     /// <typeparam name="TRequest"></typeparam>
-    public class ProgressableContainer<TRequest> : RequestContainer<TRequest>, IProgressable where TRequest : IRequest, IProgressable
+    public class ProgressableContainer<TRequest> : RequestContainer<TRequest>, IProgressableRequest where TRequest : IProgressableRequest
     {
         /// <summary>
         /// Mearged Progress of all Requests.

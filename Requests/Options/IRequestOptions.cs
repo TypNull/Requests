@@ -45,21 +45,21 @@
         /// <summary>
         /// Event that will be risen when the <see cref="IRequest"/> is cancelled.
         /// </summary>
-        public NotifyVoid? RequestCancelled { get; set; }
+        public Notify<IRequest>? RequestCancelled { get; set; }
 
         /// <summary>
         /// Event that will be risen when the <see cref="IRequest"/> is started.
         /// </summary>
-        public NotifyVoid? RequestStarted { get; set; }
+        public Notify<IRequest>? RequestStarted { get; set; }
 
         /// <summary>
         /// Event that will be risen when the <see cref="IRequest"/> finished.
         /// </summary>
-        public Notify<TCompleated>? RequestCompleated { get; set; }
+        public Notify<IRequest, TCompleated>? RequestCompleated { get; set; }
 
         /// <summary>
         /// Event that will be risen when the <see cref="IRequest"/> failed.
         /// </summary>
-        public Notify<TFailed>? RequestFailed { get; set; }
+        public Notify<IRequest, TFailed>? RequestFailed { get; set; }
     }
 }

@@ -13,6 +13,11 @@ namespace Requests
         public abstract RequestState State { get; }
 
         /// <summary>
+        /// Event that will be invoked when the <see cref="State"/> of this object changed.
+        /// </summary>
+        public abstract event EventHandler<RequestState>? StateChanged;
+
+        /// <summary>
         /// If the <see cref="IRequest"/> has priority over other not prioritized <see cref="IRequest">Requests</see>.
         /// </summary>
         public abstract RequestPriority Priority { get; }

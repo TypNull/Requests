@@ -13,6 +13,7 @@ namespace Requests
         private bool _isCanceled = false;
         private bool _disposed = false;
         private Task _task = Task.CompletedTask;
+        private RequestState _state = RequestState.Paused;
 
         /// <summary>
         /// Merged task out the requests
@@ -24,19 +25,18 @@ namespace Requests
         /// </summary>
         public RequestState State
         {
-            get
+            get { return _state; }
+            protected set
             {
-                if (_requests.Any(x => x.State == RequestState.Failed))
-                    return RequestState.Failed;
-                else if (_requests.Any(x => x.State == RequestState.Running))
-                    return RequestState.Running;
-                else if (_requests.All(x => x.State == RequestState.Compleated))
-                    return RequestState.Compleated;
-                else if (_requests.All(x => x.State == RequestState.Onhold))
-                    return RequestState.Onhold;
-                else return RequestState.Available;
+                _state = value;
+                StateChanged?.Invoke(this, value);
             }
         }
+
+        /// <summary>
+        /// Event that will be invoked when the <see cref="State"/> of this object changed.
+        /// </summary>
+        public event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
         /// Priority is unnessesary but always Normal
@@ -91,8 +91,34 @@ namespace Requests
             else if (!_isrunning)
                 request.Pause();
 
+            request.StateChanged += OnStateChanged;
             _requests.Add(request);
             _task = Task.WhenAll(_requests.Select(request => request.Task));
+        }
+
+        private void OnStateChanged(object? sender, RequestState state)
+        {
+            if (state == State)
+                return;
+            if (state != RequestState.Failed)
+            {
+                int[] states = _requests.Select(req => (int)req.State).ToArray();
+                int[] counter = new int[7];
+                foreach (int value in states)
+                    counter[value]++;
+
+                if (counter[(int)RequestState.Running] > 1)
+                    state = RequestState.Running;
+                else if (counter[(int)RequestState.Idle] > 1)
+                    state = RequestState.Idle;
+                else
+                {
+                    int max = counter.Max();
+                    state = (RequestState)counter.ToList().IndexOf(max);
+                }
+            }
+            if (state != State)
+                State = state;
         }
 
         async Task IRequest.StartRequestAsync()
@@ -165,6 +191,7 @@ namespace Requests
             if (_disposed)
                 return;
             _disposed = true;
+            StateChanged = null;
             foreach (TRequest? request in _requests)
                 request.Dispose();
             GC.SuppressFinalize(this);

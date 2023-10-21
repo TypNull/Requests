@@ -47,7 +47,7 @@ namespace Requests
         private CancellationTokenSource _cts = new();
         private readonly PauseTokenSource _pts = new();
         /// <summary>
-        /// Main <see cref="CancellationToken"/> for all <see cref="IRequest.IRequestObject"/>s.
+        /// Main <see cref="CancellationToken"/> for all <see cref="IRequest"/>s.
         /// </summary>
         public CancellationToken CT => _cts.Token;
 
@@ -55,6 +55,11 @@ namespace Requests
         /// Two main handlers to handel requests.
         /// </summary>
         public static RequestHandler[] MainRequestHandlers { get; } = new RequestHandler[] { new(), new() };
+
+        /// <summary>
+        /// A default synchronization context that targets the ThreadPool.
+        /// </summary>
+        public readonly SynchronizationContext DefaultSynchronizationContext = new();
 
         /// <summary>
         /// Requests that are not yet Handeled
@@ -196,7 +201,7 @@ namespace Requests
 
             if (request.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
                 request.Dispose();
-            else if (request.State == RequestState.Available)
+            else if (request.State == RequestState.Idle)
                 await _requestsChannel.Writer.WriteAsync(pair);
         }
 

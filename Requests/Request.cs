@@ -3,6 +3,7 @@ using System.Diagnostics;
 
 namespace Requests
 {
+
     /// <summary>
     /// A <see cref="Request{TOptions, TCompleated, TFailed}"/> object that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
@@ -32,9 +33,14 @@ namespace Requests
         private CancellationTokenRegistration _ctr;
 
         /// <summary>
+        /// The synchronization context captured upon construction.  This will never be null.
+        /// </summary>
+        protected SynchronizationContext SynchronizationContext { get; private init; }
+
+        /// <summary>
         /// The <see cref="RequestState"/> of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
-        private RequestState _state = RequestState.Onhold;
+        private RequestState _state = RequestState.Paused;
 
         /// <summary>
         /// The <see cref="RequestOptions{TCompleated, TFailed}"/> that started this request.
@@ -94,14 +100,14 @@ namespace Requests
                 if (_state is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
                     return;
                 _state = value;
-                StateChanged?.Invoke(this);
+                SynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
             }
         }
 
         /// <summary>
         /// Event that will be invoked when the <see cref="State"/> of this object changed.
         /// </summary>
-        public Notify<Request<TOptions, TCompleated, TFailed>>? StateChanged { get; set; }
+        public event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
         /// If the <see cref="Request{TOptions, TCompleated, TFailed}"/> has priority over other not prioritized <see cref="Request{TOptions, TCompleated, TFailed}">Requests</see>.
@@ -116,6 +122,7 @@ namespace Requests
         {
             _startOptions = options ?? new();
             Options = _startOptions with { };
+            SynchronizationContext = SynchronizationContext.Current ?? Options.Handler.DefaultSynchronizationContext;
             NewCTS();
         }
 
@@ -130,7 +137,7 @@ namespace Requests
                 _cts = CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT, Options.CancellationToken.Value);
             else
                 _cts = CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT);
-            _ctr = Token.Register(() => Options.RequestCancelled?.Invoke());
+            _ctr = Token.Register(() => SynchronizationContext.Post((o) => Options.RequestCancelled?.Invoke((IRequest)o!), this));
         }
 
         /// <summary>
@@ -172,8 +179,6 @@ namespace Requests
                 return;
             _disposed = true;
 
-            Options = Options with { RequestCancelled = null, RequestCompleated = null, RequestFailed = null, RequestStarted = null };
-
             _cts?.Dispose();
             _ctr.Unregister();
 
@@ -193,7 +198,7 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (State != RequestState.Available || Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested)
+            if (State != RequestState.Idle || (Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested))
                 return;
             State = RequestState.Running;
 
@@ -206,7 +211,7 @@ namespace Requests
 
             RequestReturn returnItem = new();
 
-            _ = Task.Run(() => Options.RequestStarted?.Invoke());
+            SynchronizationContext.Post((o) => Options.RequestStarted?.Invoke((IRequest)o!), this);
             try
             {
                 returnItem = await RunRequestAsync();
@@ -230,13 +235,13 @@ namespace Requests
                 if (returnItem.Successful)
                 {
                     State = RequestState.Compleated;
-                    Options.RequestCompleated?.Invoke(returnItem.CompleatedReturn);
+                    SynchronizationContext.Post((o) => Options.RequestCompleated?.Invoke((IRequest)o!, returnItem.CompleatedReturn), this);
                 }
                 else if (Token.IsCancellationRequested)
                     if (Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested)
                         State = RequestState.Cancelled;
                     else
-                        State = RequestState.Available;
+                        State = RequestState.Idle;
                 else if (AttemptCounter++ < Options.NumberOfAttempts)
                     if (Options.DelayBetweenAttemps.HasValue)
                     {
@@ -244,11 +249,11 @@ namespace Requests
                         Task.Run(() => WaitAndDeploy(Options.DelayBetweenAttemps.Value));
                     }
                     else
-                        State = RequestState.Available;
+                        State = RequestState.Idle;
                 else
                 {
                     State = RequestState.Failed;
-                    Options.RequestFailed?.Invoke(returnItem.FailedReturn);
+                    SynchronizationContext.Post((o) => Options.RequestFailed?.Invoke((IRequest)o!, returnItem.FailedReturn), this);
                 }
 
             SetTaskState();
@@ -265,7 +270,7 @@ namespace Requests
                     _isFinished.TrySetResult();
                     break;
                 case RequestState.Cancelled:
-                    _isFinished.SetCanceled();
+                    _isFinished.TrySetCanceled();
                     break;
                 case RequestState.Failed:
                     _isFinished.TrySetResult();
@@ -289,9 +294,9 @@ namespace Requests
         /// </summary>
         public virtual void Start()
         {
-            if (State != RequestState.Onhold)
+            if (State != RequestState.Paused)
                 return;
-            State = DeployDelay.HasValue ? RequestState.Waiting : RequestState.Available;
+            State = DeployDelay.HasValue ? RequestState.Waiting : RequestState.Idle;
             if (DeployDelay.HasValue)
                 Task.Run(() => WaitAndDeploy(DeployDelay.Value));
             else
@@ -309,14 +314,14 @@ namespace Requests
             await Task.Delay(timeSpan);
             if (State != RequestState.Waiting)
                 return;
-            State = RequestState.Available;
+            State = RequestState.Idle;
             Options.Handler.RunRequests(this);
         }
 
         /// <summary>
         /// Set the <see cref="Request{TOptions, TCompleated, TFailed}"/> on hold.
         /// </summary>
-        public virtual void Pause() => State = RequestState.Onhold;
+        public virtual void Pause() => State = RequestState.Paused;
 
         /// <summary>
         /// Class that holds the return and notification objects.
