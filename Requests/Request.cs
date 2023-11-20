@@ -35,7 +35,7 @@ namespace Requests
         /// <summary>
         /// The synchronization context captured upon construction.  This will never be null.
         /// </summary>
-        protected SynchronizationContext SynchronizationContext { get; private init; }
+        protected SynchronizationContext SynchronizationContext { get; }
 
         /// <summary>
         /// The <see cref="RequestState"/> of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.

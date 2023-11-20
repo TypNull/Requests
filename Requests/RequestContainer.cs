@@ -29,7 +29,7 @@ namespace Requests
             protected set
             {
                 _state = value;
-                StateChanged?.Invoke(this, value);
+                SynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
             }
         }
 
@@ -44,6 +44,11 @@ namespace Requests
         public RequestPriority Priority => RequestPriority.Normal;
 
         /// <summary>
+        /// The synchronization context captured upon construction.  This will never be null.
+        /// </summary>
+        protected SynchronizationContext SynchronizationContext { get; }
+
+        /// <summary>
         /// All exceptions that were risen by the requests
         /// </summary>
         public AggregateException? Exception => new(_requests.Where(x => x.Exception != null).Select(x => x.Exception!));
@@ -52,7 +57,7 @@ namespace Requests
         /// Constructor to merge <see cref="IRequest"/> together
         /// </summary>
         /// <param name="requests"><see cref="IRequest"/>s to merge</param>
-        public RequestContainer(params TRequest[] requests) => Add(requests);
+        public RequestContainer(params TRequest[] requests) : this() => Add(requests);
 
         /// <summary>
         /// Get all <see cref="IRequest"/> in this Container
@@ -75,8 +80,8 @@ namespace Requests
         /// <summary>
         /// Main Contructor for <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
-        public RequestContainer()
-        { }
+        public RequestContainer() => SynchronizationContext = SynchronizationContext.Current ?? new();
+
 
         /// <summary>
         /// Adds a <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
@@ -152,7 +157,9 @@ namespace Requests
         public virtual void Remove(params TRequest[] requests)
         {
             Array.ForEach(requests, request => _requests.Remove(request));
-            _task = Task.WhenAll(_requests.Select(request => request.Task));
+            if (_requests.Count > 0)
+                _task = Task.WhenAll(_requests.Select(request => request.Task));
+            else _task = Task.CompletedTask;
         }
 
         /// <summary>
