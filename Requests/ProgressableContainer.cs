@@ -21,7 +21,7 @@
         /// Constructor to merge <see cref="IRequest"/> together
         /// </summary>
         /// <param name="requests"><see cref="IRequest"/>s to merge</param>
-        public ProgressableContainer(params TRequest[] requests) => Add(requests);
+        public ProgressableContainer(params TRequest[] requests) => AddRange(requests);
 
         /// <summary>
         /// Creates a new <see cref="ProgressableContainer{TRequest}"/> that megres  <see cref="ProgressableContainer{TRequest}"/> together.
@@ -30,12 +30,9 @@
         /// <returns>A new <see cref="ProgressableContainer{TRequest}"/></returns>
         public static ProgressableContainer<TRequest> MergeContainers(/*bool autoReset = false,*/ params ProgressableContainer<TRequest>[] requestContainers)
         {
-            List<TRequest> requests = new();
-            Array.ForEach(requestContainers, requestContainer => requests.AddRange(requestContainer.GetRequests()));
-            return new ProgressableContainer<TRequest>(requests.ToArray())
-            {
-                // AutoReset = autoReset
-            };
+            ProgressableContainer<TRequest> container = new();
+            Array.ForEach(requestContainers, requestContainer => container.AddRange(requestContainer.ToArray()));
+            return container;
         }
 
         /// <summary>
@@ -73,9 +70,9 @@
         /// Adds a range <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
         /// <param name="requests">The <see cref="IRequest"/> to add.</param>
-        public override void Add(params TRequest[] requests)
+        public override void AddRange(params TRequest[] requests)
         {
-            base.Add(requests);
+            base.AddRange(requests);
             Array.ForEach(requests, req => AttachProgress(req));
         }
 

@@ -16,13 +16,13 @@
     <PackageTags>async; channel; priority; request; parallel; </PackageTags>
     <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
     <PackageIcon>logo.png</PackageIcon>
-    <Version>2.0.1</Version>
+    <Version>2.0.2</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>
-      Minor RequestContainer improvements
-    </PackageReleaseNotes>
+    <PackageReleaseNotes>Fix RequestContainer Task issue,
+Fix RequestContainer State issue 
+Add IEnumerable to RequestContainer</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

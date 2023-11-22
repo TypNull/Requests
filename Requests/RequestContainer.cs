@@ -1,4 +1,5 @@
 ﻿using Requests.Options;
+using System.Collections;
 
 namespace Requests
 {
@@ -6,19 +7,20 @@ namespace Requests
     /// Class to manage and merge more than one TRequest.
     /// </summary>
     /// <typeparam name="TRequest">A RequestObject class</typeparam>
-    public class RequestContainer<TRequest> : IRequest where TRequest : IRequest
+    public class RequestContainer<TRequest> : IEnumerable<TRequest>, IRequest where TRequest : IRequest
     {
         private readonly List<TRequest> _requests = new();
         private bool _isrunning = true;
         private bool _isCanceled = false;
         private bool _disposed = false;
-        private Task _task = Task.CompletedTask;
+        private TaskCompletionSource? _task;
+        private CancellationTokenSource _taskCancelationTokenSource = new();
         private RequestState _state = RequestState.Paused;
 
         /// <summary>
         /// Merged task out the requests
         /// </summary>
-        public Task Task => _task;
+        public Task Task => _task?.Task ?? Task.CompletedTask;
 
         /// <summary>
         /// State of this <see cref="RequestContainer{TRequest}"/>
@@ -28,6 +30,8 @@ namespace Requests
             get { return _state; }
             protected set
             {
+                if (_state == value)
+                    return;
                 _state = value;
                 SynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
             }
@@ -44,7 +48,12 @@ namespace Requests
         public RequestPriority Priority => RequestPriority.Normal;
 
         /// <summary>
-        /// The synchronization context captured upon construction.  This will never be null.
+        /// Gets the number of <see cref="IRequest"/> conntained in the <see cref="RequestContainer{TRequest}"/>
+        /// </summary>
+        public int Count => _requests.Count;
+
+        /// <summary>
+        /// The synchronization context captured upon construction. This will never be null.
         /// </summary>
         protected SynchronizationContext SynchronizationContext { get; }
 
@@ -57,13 +66,17 @@ namespace Requests
         /// Constructor to merge <see cref="IRequest"/> together
         /// </summary>
         /// <param name="requests"><see cref="IRequest"/>s to merge</param>
-        public RequestContainer(params TRequest[] requests) : this() => Add(requests);
+        public RequestContainer(params TRequest[] requests) : this() => AddRange(requests);
 
         /// <summary>
         /// Get all <see cref="IRequest"/> in this Container
         /// </summary>
         /// <returns>returns a <see cref="IRequest"/> array</returns>
-        public IReadOnlyList<TRequest> GetRequests() => _requests;
+        public TRequest this[int key]
+        {
+            get => _requests[key];
+            set => _requests[key] = value;
+        }
 
         /// <summary>
         /// Creates a new <see cref="RequestContainer{TRequest}"/> that megres  <see cref="RequestContainer{TRequest}"/> together.
@@ -72,16 +85,15 @@ namespace Requests
         /// <returns></returns>
         public static RequestContainer<TRequest> MergeContainers(params RequestContainer<TRequest>[] requestContainers)
         {
-            List<TRequest> requests = new();
-            Array.ForEach(requestContainers, requestContainer => requests.AddRange(requestContainer._requests));
-            return new RequestContainer<TRequest>(requests.ToArray());
+            RequestContainer<TRequest> newContainer = new();
+            Array.ForEach(requestContainers, requestContainer => newContainer.AddRange(requestContainer.ToArray()));
+            return newContainer;
         }
 
         /// <summary>
         /// Main Contructor for <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
         public RequestContainer() => SynchronizationContext = SynchronizationContext.Current ?? new();
-
 
         /// <summary>
         /// Adds a <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
@@ -98,32 +110,73 @@ namespace Requests
 
             request.StateChanged += OnStateChanged;
             _requests.Add(request);
-            _task = Task.WhenAll(_requests.Select(request => request.Task));
+            NewTaskCompletion();
+            OnStateChanged(this, request.State);
         }
+
+        private void NewTaskCompletion()
+        {
+            _taskCancelationTokenSource.Cancel();
+            _taskCancelationTokenSource = new();
+            if (Task.IsCompleted)
+                _task = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task.WhenAll(_requests.Select(request => request.Task)).ContinueWith(task => _task?.TrySetResult(), _taskCancelationTokenSource.Token);
+        }
+
+        /// <summary>
+        /// Adds a range <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
+        /// </summary>
+        /// <param name="requests">The <see cref="IRequest"/> to add.</param>
+        public virtual void AddRange(params TRequest[] requests)
+        {
+            if (_isCanceled)
+                Array.ForEach(requests, request => request.Cancel());
+            else if (_disposed)
+                Array.ForEach(requests, request => request.Dispose());
+            else if (!_isrunning)
+                Array.ForEach(requests, request => request.Pause());
+            Array.ForEach(requests, request => request.StateChanged += OnStateChanged);
+            _requests.AddRange(requests);
+            NewTaskCompletion();
+            State = CalculateState();
+        }
+
 
         private void OnStateChanged(object? sender, RequestState state)
         {
             if (state == State)
                 return;
             if (state != RequestState.Failed)
-            {
-                int[] states = _requests.Select(req => (int)req.State).ToArray();
-                int[] counter = new int[7];
-                foreach (int value in states)
-                    counter[value]++;
+                state = CalculateState();
+            State = state;
+        }
 
-                if (counter[(int)RequestState.Running] > 1)
-                    state = RequestState.Running;
-                else if (counter[(int)RequestState.Idle] > 1)
-                    state = RequestState.Idle;
-                else
-                {
-                    int max = counter.Max();
-                    state = (RequestState)counter.ToList().IndexOf(max);
-                }
-            }
-            if (state != State)
-                State = state;
+        private RequestState CalculateState()
+        {
+            RequestState state;
+            IEnumerable<int> states = _requests.Select(req => (int)req.State);
+            int[] counter = new int[7];
+            foreach (int value in states)
+                counter[value]++;
+
+            if (counter[6] > 0)
+                state = RequestState.Failed;
+            else if (counter[1] > 0)
+                state = RequestState.Running;
+            else if (counter[5] > 0)
+                state = RequestState.Cancelled;
+            else if (counter[0] > 0)
+                state = RequestState.Idle;
+            else if (counter[4] > 0)
+                state = RequestState.Waiting;
+            else if (counter[2] == _requests.Count)
+                state = RequestState.Compleated;
+            else if (counter[3] > 0)
+                state = RequestState.Paused;
+            else
+                state = (RequestState)Array.IndexOf(counter, counter.Max());
+
+            return state;
         }
 
         async Task IRequest.StartRequestAsync()
@@ -134,32 +187,23 @@ namespace Requests
         }
 
         /// <summary>
-        /// Adds a range <see cref="IRequest"/> to the <see cref="RequestContainer{TRequest}"/>.
-        /// </summary>
-        /// <param name="requests">The <see cref="IRequest"/> to add.</param>
-        public virtual void Add(params TRequest[] requests)
-        {
-            if (_isCanceled)
-                Array.ForEach(requests, request => request.Cancel());
-            else if (_disposed)
-                Array.ForEach(requests, request => request.Dispose());
-            else if (!_isrunning)
-                Array.ForEach(requests, request => request.Pause());
-
-            _requests.AddRange(requests);
-            _task = Task.WhenAll(_requests.Select(request => request.Task));
-        }
-
-        /// <summary>
         /// Removes a <see cref="IRequest"/> from this container.
         /// </summary>
         /// <param name="requests">Request to remove</param>
         public virtual void Remove(params TRequest[] requests)
         {
-            Array.ForEach(requests, request => _requests.Remove(request));
-            if (_requests.Count > 0)
-                _task = Task.WhenAll(_requests.Select(request => request.Task));
-            else _task = Task.CompletedTask;
+            Array.ForEach(requests, request =>
+            {
+                _requests.Remove(request);
+                request.StateChanged -= StateChanged;
+            });
+            if (_requests.Count > 0 && !Task.IsCompleted)
+                NewTaskCompletion();
+            else
+                _task = null;
+            if (State is not RequestState.Compleated and not RequestState.Paused)
+                State = CalculateState();
+
         }
 
         /// <summary>
@@ -180,6 +224,7 @@ namespace Requests
             foreach (TRequest? request in _requests)
                 request.Start();
         }
+
         /// <summary>
         /// Put every <see cref="IRequest"/> in Container on hold
         /// </summary>
@@ -203,5 +248,14 @@ namespace Requests
                 request.Dispose();
             GC.SuppressFinalize(this);
         }
+
+        /// <summary>
+        ///    Returns an enumerator that iterates through the <see cref="RequestContainer{TRequest}"/> 
+        /// </summary>
+        /// <returns> A  <see cref="RequestContainer{TRequest}"/> .Enumerator for the <see cref="RequestContainer{TRequest}"/> .</returns>
+        public IEnumerator<TRequest> GetEnumerator() => _requests.GetEnumerator();
+
+        /// <inheritdoc/>
+        IEnumerator IEnumerable.GetEnumerator() => _requests.GetEnumerator();
     }
 }
