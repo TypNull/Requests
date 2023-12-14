@@ -9,7 +9,7 @@ namespace Requests
     /// <typeparam name="TRequest">A RequestObject class</typeparam>
     public class RequestContainer<TRequest> : IEnumerable<TRequest>, IRequest where TRequest : IRequest
     {
-        private readonly List<TRequest> _requests = new();
+        private volatile TRequest[] _requests = Array.Empty<TRequest>();
         private bool _isrunning = true;
         private bool _isCanceled = false;
         private bool _disposed = false;
@@ -50,7 +50,7 @@ namespace Requests
         /// <summary>
         /// Gets the number of <see cref="IRequest"/> conntained in the <see cref="RequestContainer{TRequest}"/>
         /// </summary>
-        public int Count => _requests.Count;
+        public int Length => _requests.Length;
 
         /// <summary>
         /// The synchronization context captured upon construction. This will never be null.
@@ -109,7 +109,7 @@ namespace Requests
                 request.Pause();
 
             request.StateChanged += OnStateChanged;
-            _requests.Add(request);
+            _requests = CreateArrayWithNewItems(request);
             NewTaskCompletion();
             OnStateChanged(this, request.State);
         }
@@ -136,9 +136,17 @@ namespace Requests
             else if (!_isrunning)
                 Array.ForEach(requests, request => request.Pause());
             Array.ForEach(requests, request => request.StateChanged += OnStateChanged);
-            _requests.AddRange(requests);
+            _requests = CreateArrayWithNewItems(requests);
             NewTaskCompletion();
             State = CalculateState();
+        }
+
+        private TRequest[] CreateArrayWithNewItems(params TRequest[] items)
+        {
+            TRequest[] result = new TRequest[_requests.Length + items.Length];
+            _requests.CopyTo(result, 0);
+            items.CopyTo(result, _requests.Length);
+            return result;
         }
 
 
@@ -169,7 +177,7 @@ namespace Requests
                 state = RequestState.Idle;
             else if (counter[4] > 0)
                 state = RequestState.Waiting;
-            else if (counter[2] == _requests.Count)
+            else if (counter[2] == Length)
                 state = RequestState.Compleated;
             else if (counter[3] > 0)
                 state = RequestState.Paused;
@@ -192,12 +200,9 @@ namespace Requests
         /// <param name="requests">Request to remove</param>
         public virtual void Remove(params TRequest[] requests)
         {
-            Array.ForEach(requests, request =>
-            {
-                _requests.Remove(request);
-                request.StateChanged -= StateChanged;
-            });
-            if (_requests.Count > 0 && !Task.IsCompleted)
+            Array.ForEach(requests, request => request.StateChanged -= StateChanged);
+            _requests = _requests.Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+            if (_requests.Length > 0 && !Task.IsCompleted)
                 NewTaskCompletion();
             else
                 _task = null;
@@ -212,7 +217,7 @@ namespace Requests
         public void Cancel()
         {
             _isCanceled = true;
-            _requests.ForEach(request => request.Cancel());
+            Array.ForEach(_requests, request => request.Cancel());
         }
 
         /// <summary>
@@ -253,7 +258,7 @@ namespace Requests
         ///    Returns an enumerator that iterates through the <see cref="RequestContainer{TRequest}"/> 
         /// </summary>
         /// <returns> A  <see cref="RequestContainer{TRequest}"/> .Enumerator for the <see cref="RequestContainer{TRequest}"/> .</returns>
-        public IEnumerator<TRequest> GetEnumerator() => _requests.GetEnumerator();
+        public IEnumerator<TRequest> GetEnumerator() => ((IEnumerable<TRequest>)_requests).GetEnumerator();
 
         /// <inheritdoc/>
         IEnumerator IEnumerable.GetEnumerator() => _requests.GetEnumerator();
