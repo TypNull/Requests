@@ -1,5 +1,6 @@
 ﻿using Requests.Options;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Requests
 {
@@ -25,7 +26,7 @@ namespace Requests
         /// <summary>
         /// The <see cref="CancellationTokenSource"/> for this object.
         /// </summary>
-        private CancellationTokenSource _cts = null!;
+        private CancellationTokenSource _cts;
 
         /// <summary>
         /// The <see cref="CancellationTokenRegistration"/> for this object.
@@ -80,7 +81,7 @@ namespace Requests
         /// <summary>
         /// <see cref="AggregateException"/> that contains the throwed Exeptions
         /// </summary>
-        public virtual AggregateException? Exception => _exceptions.Count == 0 ? null : new AggregateException(_exceptions);
+        public virtual AggregateException? Exception { private set; get; }
 
         /// <summary>
         /// Delays the start of the <see cref="Request{TOptions, TCompleated, TFailed}"/> on every Start call for the specified number of milliseconds.
@@ -123,21 +124,30 @@ namespace Requests
             _startOptions = options ?? new();
             Options = _startOptions with { };
             SynchronizationContext = SynchronizationContext.Current ?? Options.Handler.DefaultSynchronizationContext;
-            NewCTS();
+            RegisterNewCTS();
         }
 
         /// <summary>
         /// Releases all Recouces of <see cref="_ctr"/> and <see cref="_cts"/> and sets them new 
         /// </summary>
-        private void NewCTS()
+        [MemberNotNull(nameof(_cts))]
+        private void RegisterNewCTS()
         {
             _cts?.Dispose();
             _ctr.Unregister();
-            if (Options.CancellationToken.HasValue)
-                _cts = CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT, Options.CancellationToken.Value);
-            else
-                _cts = CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT);
+            _cts = CreateNewCTS();
             _ctr = Token.Register(() => SynchronizationContext.Post((o) => Options.RequestCancelled?.Invoke((IRequest)o!), this));
+        }
+
+        /// <summary>
+        /// Creates an new Linked Cancelation Token Source
+        /// </summary>
+        /// <returns></returns>
+        private CancellationTokenSource CreateNewCTS()
+        {
+            if (Options.CancellationToken.HasValue)
+                return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT, Options.CancellationToken.Value);
+            return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT);
         }
 
         /// <summary>
@@ -198,20 +208,22 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (State != RequestState.Idle || (Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested))
+            if (State != RequestState.Idle || Options.Handler.CT.IsCancellationRequested || Options.CancellationToken?.IsCancellationRequested == true)
                 return;
             State = RequestState.Running;
 
             if (_cts.IsCancellationRequested)
-            {
-                if (Options.Handler.CT.IsCancellationRequested)
-                    return;
-                NewCTS();
-            }
-
-            RequestReturn returnItem = new();
+                RegisterNewCTS();
 
             SynchronizationContext.Post((o) => Options.RequestStarted?.Invoke((IRequest)o!), this);
+
+            RequestReturn returnItem = await TryRunRequestAsync();
+            SetResult(returnItem);
+        }
+
+        private async Task<Request<TOptions, TCompleated, TFailed>.RequestReturn> TryRunRequestAsync()
+        {
+            RequestReturn returnItem = new();
             try
             {
                 returnItem = await RunRequestAsync();
@@ -221,8 +233,7 @@ namespace Requests
                 AddException(ex);
                 Debug.Assert(false, ex.Message);
             }
-
-            SetResult(returnItem);
+            return returnItem;
         }
 
         /// <summary>
@@ -231,33 +242,34 @@ namespace Requests
         /// <param name="returnItem"></param>
         private void SetResult(RequestReturn returnItem)
         {
-            if (State == RequestState.Running)
-                if (returnItem.Successful)
-                {
-                    State = RequestState.Compleated;
-                    SynchronizationContext.Post((o) => Options.RequestCompleated?.Invoke((IRequest)o!, returnItem.CompleatedReturn), this);
-                }
-                else if (Token.IsCancellationRequested)
-                    if (Options.CancellationToken.HasValue && Options.CancellationToken.Value.IsCancellationRequested)
-                        State = RequestState.Cancelled;
-                    else
-                        State = RequestState.Idle;
-                else if (AttemptCounter++ < Options.NumberOfAttempts)
-                    if (Options.DelayBetweenAttemps.HasValue)
-                    {
-                        State = RequestState.Waiting;
-                        Task.Run(() => WaitAndDeploy(Options.DelayBetweenAttemps.Value));
-                    }
-                    else
-                        State = RequestState.Idle;
-                else
-                {
-                    State = RequestState.Failed;
-                    SynchronizationContext.Post((o) => Options.RequestFailed?.Invoke((IRequest)o!, returnItem.FailedReturn), this);
-                }
-
+            EvalueateRequest(returnItem);
             SetTaskState();
         }
+
+        private void EvalueateRequest(Request<TOptions, TCompleated, TFailed>.RequestReturn returnItem)
+        {
+            if (State != RequestState.Running)
+                return;
+            if (!returnItem.Successful)
+            {
+                if (Token.IsCancellationRequested || AttemptCounter++ < Options.NumberOfAttempts)
+                {
+                    if (Options.CancellationToken?.IsCancellationRequested == true)
+                        State = RequestState.Cancelled;
+                    else if (Options.DelayBetweenAttemps.HasValue)
+                        _ = WaitAndDeploy(Options.DelayBetweenAttemps.Value);
+                    else
+                        State = RequestState.Idle;
+                    return;
+                }
+                State = RequestState.Failed;
+                SynchronizationContext.Post((o) => Options.RequestFailed?.Invoke((IRequest)o!, returnItem.FailedReturn), this);
+                return;
+            }
+            State = RequestState.Compleated;
+            SynchronizationContext.Post((o) => Options.RequestCompleated?.Invoke((IRequest)o!, returnItem.CompleatedReturn), this);
+        }
+
 
         /// <summary>
         /// Sets the Status of the Task
@@ -269,19 +281,24 @@ namespace Requests
                 case RequestState.Compleated:
                     _isFinished.TrySetResult();
                     break;
-                case RequestState.Cancelled:
-                    _isFinished.TrySetCanceled();
-                    break;
                 case RequestState.Failed:
                     _isFinished.TrySetResult();
                     break;
+                case RequestState.Cancelled:
+                    _isFinished.TrySetCanceled();
+                    break;
+
             }
         }
 
         /// <summary>
         /// Adds a <see cref="Exception"/> to the <see cref="Exception"/> trace
         /// </summary>
-        protected void AddException(Exception exception) => _exceptions.Add(exception);
+        protected void AddException(Exception exception)
+        {
+            _exceptions.Add(exception);
+            Exception = new AggregateException(_exceptions);
+        }
 
         /// <summary>
         /// Handles the <see cref="Request{TOptions, TCompleated, TFailed}"/> that the <see cref="HttpClient"/> should start.
@@ -296,11 +313,13 @@ namespace Requests
         {
             if (State != RequestState.Paused)
                 return;
-            State = DeployDelay.HasValue ? RequestState.Waiting : RequestState.Idle;
             if (DeployDelay.HasValue)
-                Task.Run(() => WaitAndDeploy(DeployDelay.Value));
-            else
-                Options.Handler.RunRequests(this);
+            {
+                _ = WaitAndDeploy(DeployDelay.Value);
+                return;
+            }
+            State = RequestState.Idle;
+            Options.Handler.RunRequests(this);
         }
 
         /// <summary>
@@ -309,8 +328,7 @@ namespace Requests
         /// <param name="timeSpan">Time span to the deploy</param>
         private async Task WaitAndDeploy(TimeSpan timeSpan)
         {
-            if (State != RequestState.Waiting)
-                return;
+            State = RequestState.Waiting;
             await Task.Delay(timeSpan);
             if (State != RequestState.Waiting)
                 return;
@@ -329,19 +347,6 @@ namespace Requests
         protected class RequestReturn
         {
             /// <summary>
-            /// Contructor to set the return types
-            /// </summary>
-            /// <param name="successful">Bool that indicates success</param>
-            /// <param name="compleatedReturn">Object that will be returned if completed</param>
-            /// <param name="failedReturn">Object rthat will be retuned if failed</param>
-            public RequestReturn(bool successful, TCompleated compleatedReturn, TFailed failedReturn)
-            {
-                Successful = successful;
-                CompleatedReturn = compleatedReturn;
-                FailedReturn = failedReturn;
-            }
-
-            /// <summary>
             /// Main constructor
             /// </summary>
             public RequestReturn() { }
@@ -359,7 +364,7 @@ namespace Requests
             /// <summary>
             /// Indicates if the <see cref="Request{TOptions, TCompleated, TFailed}"/> was successful.
             /// </summary>
-            public bool Successful { get; set; } = false;
+            public bool Successful { get; set; }
         }
     }
 }
