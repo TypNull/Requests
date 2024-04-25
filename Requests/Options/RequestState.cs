@@ -21,7 +21,7 @@
         /// </summary>
         Paused,
         /// <summary>
-        /// <see cref="IRequest"/> is cancelled.
+        /// <see cref="IRequest"/> is waiting to be deployed to the handler.
         /// </summary>
         Waiting,
         /// <summary>
