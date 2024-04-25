@@ -17,14 +17,13 @@ You can install Requests by searching for "Requests" in the NuGet Package Manage
 
 ## Usage
 
-To use Requests, first import the library:
+To utilize the **Requests** library in C#, begin by importing it:
 
-```cs
+```csharp
 using Shard.Requests;
 ```
 
-Then, create a Request object and it will automaticly be added to the `RequestHandler`.
-If a request fails, the RequestHandler will automatically retry the request according to the retry settings specified.
+Next, instantiate a `Request` object, and it will automatically be included in the `RequestHandler`. If a request encounters an error, the `RequestHandler` will automatically retry the request based on the specified retry settings. For additional information, refer to the Requests [Wiki](https://github.com/TypNull/Requests/wiki/).
 
 ## Classes
 
