@@ -1,64 +1,64 @@
 ﻿namespace Requests.Options
 {
     /// <summary>
-    /// Generic interface that conatains design for all <see cref="IRequest"/> types.
+    /// A generic interface that defines the structure for all <see cref="IRequest"/> types.
     /// </summary>
-    /// <typeparam name="TCompleated">Type of return if compleated</typeparam>
-    /// <typeparam name="TFailed">Type of return if failed</typeparam>
+    /// <typeparam name="TCompleated">The return type if the request is completed successfully.</typeparam>
+    /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
     public interface IRequestOptions<TCompleated, TFailed>
     {
         /// <summary>
-        /// If the Request sould be automaticly started if when it is inizialised.
+        /// Determines whether the <see cref="IRequest"/> should be automatically started upon initialization.
         /// </summary>
         public bool AutoStart { get; set; }
 
         /// <summary>
-        /// If the <see cref="IRequest"/> has priority over other not prioritized <see cref="IRequest">Requests</see>.
+        /// Specifies if the <see cref="IRequest"/> has priority over other non-prioritized <see cref="IRequest">Requests</see>.
         /// </summary>
         public RequestPriority Priority { get; set; }
 
         /// <summary>
-        /// Delays the start of the <see cref="IRequest"/> on every start call for the specified number of milliseconds.
+        /// Delays the start of the <see cref="IRequest"/> by a specified number of milliseconds on every start call.
         /// </summary>
         public TimeSpan? DeployDelay { get; set; }
 
         /// <summary>
-        /// If the <see cref="IRequest"/> is an big file and should download in a second <see cref="Thread"/>.
+        /// Sets the the <see cref="RequestHandler"/> for the <see cref="IRequest"/>.
         /// </summary>
         public RequestHandler Handler { get; set; }
 
         /// <summary>
-        /// How often the <see cref="IRequest"/> should be retried if it fails.
+        /// Specifies the number of times the <see cref="IRequest"/> should be retried if it fails.
         /// </summary>
         public byte NumberOfAttempts { get; set; }
 
         /// <summary>
-        /// How long sould be the new attemp be delayed if the <see cref="IRequest"/> fails.
+        /// Specifies the delay duration before a new attempt is made if the <see cref="IRequest"/> fails.
         /// </summary>
         public TimeSpan? DelayBetweenAttemps { get; set; }
 
         /// <summary>
-        /// <see cref="System.Threading.CancellationToken"/> that the user sets to cancel the <see cref="IRequest"/>.
+        /// A <see cref="System.Threading.CancellationToken"/> that the user can set to cancel the <see cref="IRequest"/>.
         /// </summary>
         public CancellationToken? CancellationToken { get; set; }
 
         /// <summary>
-        /// Event that will be risen when the <see cref="IRequest"/> is cancelled.
+        /// An event that will be triggered when the <see cref="IRequest"/> is cancelled.
         /// </summary>
         public Notify<IRequest>? RequestCancelled { get; set; }
 
         /// <summary>
-        /// Event that will be risen when the <see cref="IRequest"/> is started.
+        /// An event that will be triggered when the <see cref="IRequest"/> is started.
         /// </summary>
         public Notify<IRequest>? RequestStarted { get; set; }
 
         /// <summary>
-        /// Event that will be risen when the <see cref="IRequest"/> finished.
+        /// An event that will be triggered when the <see cref="IRequest"/> is completed.
         /// </summary>
         public Notify<IRequest, TCompleated>? RequestCompleated { get; set; }
 
         /// <summary>
-        /// Event that will be risen when the <see cref="IRequest"/> failed.
+        /// An event that will be triggered when the <see cref="IRequest"/> fails.
         /// </summary>
         public Notify<IRequest, TFailed>? RequestFailed { get; set; }
     }

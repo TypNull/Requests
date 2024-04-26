@@ -3,17 +3,17 @@
 namespace Requests
 {
     /// <summary>
-    /// A Class to easy implement a <see cref="Request{TOptions, TCompleated, TFailed}"/> functionality without creating a new <see cref="Request{TOptions, TCompleated, TFailed}"/> child.
+    /// A class that simplifies implementing <see cref="Request{TOptions, TCompleted, TFailed}"/> functionality without creating a new child of <see cref="Request{TOptions, TCompleted, TFailed}"/>.
     /// </summary>
     public class OwnRequest : Request<RequestOptions<VoidStruct, VoidStruct>, VoidStruct, VoidStruct>
     {
         private readonly Func<CancellationToken, Task<bool>> _own;
 
         /// <summary>
-        /// Constructor to create a <see cref="OwnRequest"/>.
+        /// Constructor to create an instance of <see cref="OwnRequest"/>.
         /// </summary>
-        /// <param name="own">Function that contains a request</param>
-        /// <param name="requestOptions">Options to modify the <see cref="OwnRequest"/></param>
+        /// <param name="own">Function that contains the request logic.</param>
+        /// <param name="requestOptions">Options to modify the behavior of <see cref="OwnRequest"/>.</param>
         public OwnRequest(Func<CancellationToken, Task<bool>> own, RequestOptions<VoidStruct, VoidStruct>? requestOptions = null) : base(requestOptions)
         {
             _own = own;
@@ -21,9 +21,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Handles the <see cref="OwnRequest"/>.
+        /// Handles the execution of the <see cref="OwnRequest"/>.
         /// </summary>
-        /// <returns>A item that indicates if the <see cref="OwnRequest"/> was succesful.</returns>
+        /// <returns>An item indicating whether the <see cref="OwnRequest"/> was successful.</returns>
         protected override async Task<RequestReturn> RunRequestAsync() => new() { Successful = await _own.Invoke(Token) };
     }
 }

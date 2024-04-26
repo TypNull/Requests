@@ -39,7 +39,7 @@ namespace Requests.Channel
             Task.Factory.StartNew(action, state,
                 CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
 
-        private static CancellationTokenRegistration UnsafeRegister(CancellationToken cancellationToken, Action<object?> action, object? state) =>
+        private static CancellationTokenRegistration UnsafeRegister(Action<object?> action, object? state, CancellationToken cancellationToken) =>
             cancellationToken.Register(action, state);
         /// <summary>Registration with a provided cancellation token.</summary>
         private readonly CancellationTokenRegistration _registration;
@@ -92,11 +92,11 @@ namespace Requests.Channel
             if (cancellationToken.CanBeCanceled)
             {
                 CancellationToken = cancellationToken;
-                _registration = UnsafeRegister(cancellationToken, static s =>
+                _registration = UnsafeRegister(static s =>
                 {
                     AsyncOperation<TResult> thisRef = (AsyncOperation<TResult>)s!;
                     thisRef.TrySetCanceled(thisRef.CancellationToken);
-                }, this);
+                }, this, cancellationToken);
             }
         }
 

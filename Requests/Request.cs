@@ -6,60 +6,60 @@ namespace Requests
 {
 
     /// <summary>
-    /// A <see cref="Request{TOptions, TCompleated, TFailed}"/> object that can be managed by the <see cref="RequestHandler"/>.
+    /// Represents a <see cref="Request{TOptions, TCompleated, TFailed}"/> object that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
-    /// <typeparam name="TOptions">Type of options</typeparam>
-    /// <typeparam name="TCompleated">Type of compleated return</typeparam>
-    /// <typeparam name="TFailed">Type of failed return</typeparam>
+    /// <typeparam name="TOptions">The type of options.</typeparam>
+    /// <typeparam name="TCompleated">The type of completed return.</typeparam>
+    /// <typeparam name="TFailed">The type of failed return.</typeparam>
     public abstract class Request<TOptions, TCompleated, TFailed> : IRequest where TOptions : RequestOptions<TCompleated, TFailed>, new()
     {
         /// <summary>
-        /// If this object is disposed of.
+        /// Indicates whether this object has been disposed of.
         /// </summary>
         private bool _disposed;
 
         /// <summary>
-        /// How often this <see cref="Request{TOptions, TCompleated, TFailed}"/> failded.
+        /// Keeps track of how many times this <see cref="Request{TOptions, TCompleated, TFailed}"/> failed.
         /// </summary>
         public virtual int AttemptCounter { get; private set; }
 
         /// <summary>
-        /// The <see cref="CancellationTokenSource"/> for this object.
+        /// The <see cref="CancellationTokenSource"/> associated with this object.
         /// </summary>
         private CancellationTokenSource _cts;
 
         /// <summary>
-        /// The <see cref="CancellationTokenRegistration"/> for this object.
+        /// The <see cref="CancellationTokenRegistration"/> associated with this object.
         /// </summary>
         private CancellationTokenRegistration _ctr;
 
         /// <summary>
-        /// The synchronization context captured upon construction.  This will never be null.
+        /// The synchronization context captured upon construction. This will never be null.
         /// </summary>
         protected SynchronizationContext SynchronizationContext { get; }
 
         /// <summary>
-        /// The <see cref="RequestState"/> of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
+        /// The current state of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
         private RequestState _state = RequestState.Paused;
 
         /// <summary>
-        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> that started this request.
+        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> that initiated this request.
         /// </summary>
         private readonly TOptions _startOptions;
 
         /// <summary>
-        /// <see cref="System.Threading.Tasks.Task"/> that indicates of this <see cref="Request{TOptions, TCompleated, TFailed}"/> finished.
+        /// A <see cref="System.Threading.Tasks.Task"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> has finished.
         /// </summary>
         private readonly TaskCompletionSource _isFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>
-        /// List of all collected exceptions.
+        /// A list of all collected exceptions during the request.
         /// </summary>
         private readonly List<Exception> _exceptions = new();
 
         /// <summary>
-        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> of this object.
+        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> associated with this object.
         /// </summary>
         protected TOptions Options { get; set; }
 
@@ -69,17 +69,17 @@ namespace Requests
         public TOptions StartOptions => _startOptions;
 
         /// <summary>
-        /// <see cref="CancellationToken"/> that indicates if this <see cref="Request{TOptions, TCompleated, TFailed}"/> was cancelled.
+        /// A <see cref="CancellationToken"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> was cancelled.
         /// </summary>
         protected CancellationToken Token => _cts.Token;
 
         /// <summary>
-        /// <see cref="System.Threading.Tasks.Task"/> that indicates of this <see cref="Request{TOptions, TCompleated, TFailed}"/> finished.
+        /// A <see cref="System.Threading.Tasks.Task"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> has finished.
         /// </summary>
         public virtual Task Task => _isFinished.Task;
 
         /// <summary>
-        /// <see cref="AggregateException"/> that contains the throwed Exeptions
+        /// An <see cref="AggregateException"/> that contains any thrown exceptions.
         /// </summary>
         public virtual AggregateException? Exception { private set; get; }
 
@@ -92,7 +92,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// The <see cref="RequestState"/> of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
+        /// The current state of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
         public virtual RequestState State
         {
@@ -106,19 +106,19 @@ namespace Requests
         }
 
         /// <summary>
-        /// Event that will be invoked when the <see cref="State"/> of this object changed.
+        /// Event that is invoked when the <see cref="State"/> of this object changes.
         /// </summary>
         public event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
-        /// If the <see cref="Request{TOptions, TCompleated, TFailed}"/> has priority over other not prioritized <see cref="Request{TOptions, TCompleated, TFailed}">Requests</see>.
+        /// Gets the priority of the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
         /// </summary>
         public virtual RequestPriority Priority => Options.Priority;
 
         /// <summary>
-        /// Consructor of the <see cref="Request{TOptions, TCompleated, TFailed}"/> class 
+        /// Constructor for the <see cref="Request{TOptions, TCompleted, TFailed}"/> class.
         /// </summary>
-        /// <param name="options">Options to modify the <see cref="Request{TOptions, TCompleated, TFailed}"/></param>
+        /// <param name="options">Options to modify the <see cref="Request{TOptions, TCompleted, TFailed}"/>.</param>
         protected Request(TOptions? options = null)
         {
             _startOptions = options ?? new();
@@ -128,7 +128,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Releases all Recouces of <see cref="_ctr"/> and <see cref="_cts"/> and sets them new 
+        /// Releases all resources associated with <see cref="_ctr"/> and <see cref="_cts"/> and sets them anew.
         /// </summary>
         [MemberNotNull(nameof(_cts))]
         private void RegisterNewCTS()
@@ -140,22 +140,22 @@ namespace Requests
         }
 
         /// <summary>
-        /// Creates an new Linked Cancelation Token Source
+        /// Creates a new linked cancellation token source.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>A new <see cref="CancellationTokenSource"/>.</returns>
         private CancellationTokenSource CreateNewCTS()
         {
             if (Options.CancellationToken.HasValue)
-                return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT, Options.CancellationToken.Value);
-            return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CT);
+                return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken, Options.CancellationToken.Value);
+            return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken);
         }
 
         /// <summary>
-        /// Cancel the <see cref="Request{TOptions, TCompleated, TFailed}"/>
+        /// Cancels the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
         /// </summary>
-        /// /// <exception cref="AggregateException"></exception>
-        /// /// <exception cref="ObjectDisposedException"></exception>
-        /// /// <exception cref="InvalidOperationException"></exception>
+        /// <exception cref="AggregateException"></exception>
+        /// <exception cref="ObjectDisposedException"></exception>
+        /// <exception cref="InvalidOperationException"></exception>
         public virtual void Cancel()
         {
             if (State == RequestState.Cancelled)
@@ -167,15 +167,15 @@ namespace Requests
         }
 
         /// <summary>
-        /// Wait to finish this <see cref="IRequest"/>.
+        /// Waits for this <see cref="IRequest"/> to finish.
         /// </summary>
         /// <exception cref="AggregateException"></exception>
         /// <exception cref="ObjectDisposedException"></exception>
         public virtual void Wait() => Task.Wait();
 
         /// <summary>
-        /// Dispose the <see cref="Request{TOptions, TCompleated, TFailed}"/>. 
-        /// Will be called automaticly by the <see cref="RequestHandler"/>.
+        /// Disposes the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
+        /// This method is automatically called by the <see cref="RequestHandler"/>.
         /// </summary>
         /// <exception cref="AggregateException"></exception>
         /// <exception cref="ArgumentException"></exception>
@@ -196,7 +196,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// If AutoStart is set Start request
+        /// If AutoStart is set, starts the request.
         /// </summary>
         protected void AutoStart()
         {
@@ -204,11 +204,11 @@ namespace Requests
         }
 
         /// <summary>
-        /// Runs the <see cref="Request{TOptions, TCompleated, TFailed}"/> that was created out this object
+        /// Executes the request that was instantiated from this class.
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (State != RequestState.Idle || Options.Handler.CT.IsCancellationRequested || Options.CancellationToken?.IsCancellationRequested == true)
+            if (State != RequestState.Idle || Options.Handler.CancellationToken.IsCancellationRequested || Options.CancellationToken?.IsCancellationRequested == true)
                 return;
             State = RequestState.Running;
 
@@ -237,9 +237,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Sets the result of the Request and handles if it doesn't succeed
+        /// Evaluates the result of the <see cref="Request{TOptions, TCompleated, TFailed}"/> and manages the outcome if it's not successful.
         /// </summary>
-        /// <param name="returnItem"></param>
+        /// <param name="returnItem"> object that indicates the success of the <see cref="Request{TOptions, TCompleated, TFailed}"/></param>
         private void SetResult(RequestReturn returnItem)
         {
             EvalueateRequest(returnItem);
@@ -272,7 +272,7 @@ namespace Requests
 
 
         /// <summary>
-        /// Sets the Status of the Task
+        /// Updates the Task's status based on the current state of the <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
         private void SetTaskState()
         {
@@ -292,7 +292,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Adds a <see cref="Exception"/> to the <see cref="Exception"/> trace
+        /// Appends an <see cref="System.Exception"/> to the <see cref="AggregateException"/> trace.
         /// </summary>
         protected void AddException(Exception exception)
         {
@@ -301,13 +301,13 @@ namespace Requests
         }
 
         /// <summary>
-        /// Handles the <see cref="Request{TOptions, TCompleated, TFailed}"/> that the <see cref="HttpClient"/> should start.
+        /// Contains the execution of the <see cref="Request{TOptions, TCompleated, TFailed}"/> implementation.
         /// </summary>
-        /// <returns>A <see cref="RequestReturn"/> object that indicates if the <see cref="Request{TOptions, TCompleated, TFailed}"/> was succesful and returns the return objects.</returns>
+        /// <returns>A <see cref="RequestReturn"/> object that indicates the success of the <see cref="Request{TOptions, TCompleated, TFailed}"/> and returns the result objects.</returns>
         protected abstract Task<RequestReturn> RunRequestAsync();
 
         /// <summary>
-        /// Start the <see cref="Request{TOptions, TCompleated, TFailed}"/> if it is not yet started or paused.
+        /// Starts the <see cref="Request{TOptions, TCompleated, TFailed}"/> if it hasn't started or is paused.
         /// </summary>
         public virtual void Start()
         {
@@ -323,9 +323,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Waits that the timespan ends to deploy the <see cref="Request{TOptions, TCompleated, TFailed}"/>
+        /// Delays the deployment of the <see cref="Request{TOptions, TCompleated, TFailed}"/> until the specified timespan has elapsed.
         /// </summary>
-        /// <param name="timeSpan">Time span to the deploy</param>
+        /// <param name="timeSpan">The delay duration before deploying the <see cref="Request{TOptions, TCompleated, TFailed}"/>.</param>
         private async Task WaitAndDeploy(TimeSpan timeSpan)
         {
             State = RequestState.Waiting;
@@ -337,32 +337,43 @@ namespace Requests
         }
 
         /// <summary>
-        /// Set the <see cref="Request{TOptions, TCompleated, TFailed}"/> on hold.
+        /// Puts the <see cref="Request{TOptions, TCompleated, TFailed}"/> into a paused state.
         /// </summary>
         public virtual void Pause() => State = RequestState.Paused;
 
         /// <summary>
-        /// Class that holds the return and notification objects.
+        /// Attempts to transition the <see cref="IRequest"/> state to idle.
+        /// This is possible only if the request is not completed, failed, or cancelled.
+        /// </summary>
+        /// <returns>True if the request is in an idle <see cref="RequestState"/>, otherwise false.</returns>
+        public bool TrySetIdle()
+        {
+            State = RequestState.Idle;
+            return State == RequestState.Idle;
+        }
+
+        /// <summary>
+        /// A class that encapsulates the return objects and notifications for <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
         protected class RequestReturn
         {
             /// <summary>
-            /// Main constructor
+            /// Default constructor.
             /// </summary>
             public RequestReturn() { }
 
             /// <summary>
-            /// Object that will be returned by the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleated"/> delegate.
+            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleated"/> delegate is invoked.
             /// </summary>
             public TCompleated? CompleatedReturn { get; set; }
 
             /// <summary>
-            /// Object that will be returned by the <see cref="RequestOptions{TCompleated,TFailed}.RequestFailed"/> delegate.
+            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestFailed"/> delegate is invoked.
             /// </summary>
             public TFailed? FailedReturn { get; set; }
 
             /// <summary>
-            /// Indicates if the <see cref="Request{TOptions, TCompleated, TFailed}"/> was successful.
+            /// A flag indicating whether the <see cref="Request{TOptions, TCompleated, TFailed}"/> was successful.
             /// </summary>
             public bool Successful { get; set; }
         }

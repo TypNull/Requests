@@ -1,12 +1,12 @@
 ﻿namespace Requests
 {
     /// <summary>
-    /// Interface to that contains a progress object
+    /// Represents an interface that includes a progress object.
     /// </summary>
     public interface IProgressableRequest : IRequest
     {
         /// <summary>
-        /// Progress object to return the progress value
+        /// Gets the progress object to retrieve the progress value.
         /// </summary>
         public Progress<float> Progress { get; }
     }

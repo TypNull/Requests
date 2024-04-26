@@ -1,30 +1,39 @@
 ﻿namespace Requests.Channel
 {
     /// <summary>
-    /// Stores options that configure the degree of max parallism in for the channel
+    /// Represents a configuration class for setting the maximum degree of parallelism in a channel.
     /// </summary>
     public class ParallelChannelOptions : ParallelOptions
     {
+        /// <summary>
+        /// The maximum degree of parallelism for the channel.
+        /// </summary>
         private int _maxDegreeOfParallelism = Environment.ProcessorCount;
 
         /// <summary>
-        /// Event that notifys the changed degree of parallelism
+        /// Occurs when the maximum degree of parallelism changes.
         /// </summary>
         public event EventHandler<int>? DegreeOfParallelismChangedDelta;
 
         /// <summary>
-        /// Pause token
+        /// Gets or sets the pause token that can be used to easily end the process.
         /// </summary>
         public PauseToken EasyEndToken { get; set; }
 
         /// <summary>
-        /// Main contructor
+        /// Initializes a new instance of the <see cref="ParallelChannelOptions"/> class.
         /// </summary>
         public ParallelChannelOptions() => base.MaxDegreeOfParallelism = int.MaxValue;
 
         /// <summary>
-        /// Maximal degree of parallelism of the channel
+        /// Gets or sets the maximum degree of parallelism for the channel.
         /// </summary>
+        /// <value>
+        /// The maximum degree of parallelism.
+        /// </value>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// Thrown when the value is less than zero.
+        /// </exception>
         public new int MaxDegreeOfParallelism
         {
             get => _maxDegreeOfParallelism;

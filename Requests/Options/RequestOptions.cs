@@ -1,11 +1,10 @@
 ﻿namespace Requests.Options
 {
     /// <summary>
-    /// Record implementation of IRequestOptions
-    /// 
+    /// A record that implements the <see cref="IRequestOptions{TCompleated, TFailed}"/> interface.
     /// </summary>
-    /// <typeparam name="TCompleated">Type of return if compleated</typeparam>
-    /// <typeparam name="TFailed">Type of return if failed</typeparam>
+    /// <typeparam name="TCompleated">The return type if the request is completed successfully.</typeparam>
+    /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
     public record RequestOptions<TCompleated, TFailed> : IRequestOptions<TCompleated, TFailed>
     {
         /// <inheritdoc />
@@ -40,8 +39,9 @@
         public Notify<IRequest>? RequestCancelled { get; set; }
 
         /// <summary>
-        /// Copy constructor for the record <see cref="RequestOptions{TCompleated, TFailed}"/>
+        /// Copy constructor for the RequestOptions record.
         /// </summary>
+        /// <param name="options">The RequestOptions instance to copy from.</param>
         protected RequestOptions(RequestOptions<TCompleated, TFailed> options)
         {
             Priority = options.Priority;
@@ -58,7 +58,7 @@
         }
 
         /// <summary>
-        /// Main constructor for the record <see cref="RequestOptions{TCompleated, TFailed}"/>
+        /// Default constructor for the RequestOptions record.
         /// </summary>
         public RequestOptions() { }
     }

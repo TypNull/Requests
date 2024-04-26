@@ -3,53 +3,58 @@
 namespace Requests
 {
     /// <summary>
-    /// A <see cref="IRequest"/> object that can be managed by the <see cref="RequestHandler"/>.
+    /// Represents an <see cref="IRequest"/> object that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
     public interface IRequest : IDisposable
     {
         /// <summary>
-        /// The <see cref="RequestState"/> of this <see cref="IRequest"/>.
+        /// Gets the current <see cref="RequestState"/> of this <see cref="IRequest"/>.
         /// </summary>
         public abstract RequestState State { get; }
 
         /// <summary>
-        /// Event that will be invoked when the <see cref="State"/> of this object changed.
+        /// Event that is triggered when the <see cref="State"/> of this object changes.
         /// </summary>
         public abstract event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
-        /// If the <see cref="IRequest"/> has priority over other not prioritized <see cref="IRequest">Requests</see>.
+        /// Indicates whether the <see cref="IRequest"/> has priority over other non-prioritized <see cref="IRequest">Requests</see>.
         /// </summary>
         public abstract RequestPriority Priority { get; }
 
         /// <summary>
-        /// <see cref="System.Threading.Tasks.Task"/> that indicates of this <see cref="IRequest"/> finished.
+        /// Gets the <see cref="System.Threading.Tasks.Task"/> representing the completion status of this <see cref="IRequest"/>.
         /// </summary>
         public abstract Task Task { get; }
 
         /// <summary>
-        /// <see cref="AggregateException"/> that occurs while processing.
+        /// Gets the <see cref="AggregateException"/> that occurred during processing, if any.
         /// </summary>
         public abstract AggregateException? Exception { get; }
 
         /// <summary>
-        /// Runs the <see cref="IRequest"/> that was created out this object
+        /// Starts the execution of the <see cref="IRequest"/> created from this object.
         /// </summary>
         protected internal Task StartRequestAsync();
 
         /// <summary>
-        /// Cancel the <see cref="IRequest"/>
+        /// Cancels the execution of the <see cref="IRequest"/>.
         /// </summary>
         public abstract void Cancel();
 
         /// <summary>
-        /// Start the <see cref="IRequest"/> if it is not yet started or paused.
+        /// Starts the <see cref="IRequest"/> if it is not yet started or resumes it if paused.
         /// </summary>
         public abstract void Start();
 
         /// <summary>
-        /// Set the <see cref="IRequest"/> on hold.
+        /// Puts the <see cref="IRequest"/> on hold.
         /// </summary>
         public abstract void Pause();
+
+        /// <summary>
+        /// Tries to set the <see cref="IRequest"/> <see cref="State"/> to idle.
+        /// </summary>
+        public abstract bool TrySetIdle();
     }
 }

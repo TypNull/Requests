@@ -1,20 +1,20 @@
 ﻿namespace Requests.Options
 {
     /// <summary>
-    /// Enum to set the Priority of a Request;
+    /// Enum to define the priority levels of a request.
     /// </summary>
     public enum RequestPriority
     {
         /// <summary>
-        /// Highest priority.
+        /// Represents the highest priority level for a request.
         /// </summary>
         High,
         /// <summary>
-        /// Normal priority.
+        /// Represents the default or normal priority level for a request.
         /// </summary>
         Normal,
         /// <summary>
-        /// Lowest priority.
+        /// Represents the lowest priority level for a request.
         /// </summary>
         Low
     }

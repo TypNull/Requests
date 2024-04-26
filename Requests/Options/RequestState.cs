@@ -1,35 +1,36 @@
 ﻿namespace Requests.Options
-{/// <summary>
- /// Indicates the state of a <see cref="IRequest"/>.
- /// </summary>
+{
+    /// <summary>
+    /// Enum that represents the various states of an <see cref="IRequest"/>.
+    /// </summary>
     public enum RequestState
     {
         /// <summary>
-        /// <see cref="IRequest"/> can be started.
+        /// State indicating that the <see cref="IRequest"/> is ready to be processed.
         /// </summary>
         Idle,
         /// <summary>
-        /// <see cref="IRequest"/> is running.
+        /// State indicating that the <see cref="IRequest"/> is currently in progress.
         /// </summary>
         Running,
         /// <summary>
-        /// <see cref="IRequest"/> is sucessfuly compleated.
+        /// State indicating that the <see cref="IRequest"/> has been completed successfully.
         /// </summary>
         Compleated,
         /// <summary>
-        /// <see cref="IRequest"/> is paused.
+        /// State indicating that the <see cref="IRequest"/> is currently paused.
         /// </summary>
         Paused,
         /// <summary>
-        /// <see cref="IRequest"/> is waiting to be deployed to the handler.
+        /// State indicating that the <see cref="IRequest"/> is waiting to be deployed to the handler.
         /// </summary>
         Waiting,
         /// <summary>
-        /// <see cref="IRequest"/> is cancelled.
+        /// State indicating that the <see cref="IRequest"/> has been cancelled.
         /// </summary>
         Cancelled,
         /// <summary>
-        /// <see cref="IRequest"/> failed.
+        /// State indicating that the <see cref="IRequest"/> has failed.
         /// </summary>
         Failed
     }

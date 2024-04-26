@@ -4,24 +4,23 @@ using Requests.Options;
 namespace Requests
 {
     /// <summary>
-    /// Class that executes the Requests
+    /// The <see cref="RequestHandler"/> class is responsible for executing instances of the <see cref="IRequest"/> interface.
     /// </summary>
     public class RequestHandler
     {
         /// <summary>
-        /// Priority Channel that holds all Requests
+        /// A priority channel that queues all incoming instances of the <see cref="IRequest"/> interface.
         /// </summary>
         private readonly PriorityChannel<IRequest> _requestsChannel = new(3);
 
         /// <summary>
-        /// Indicates if the <see cref="RequestHandler"/> is running.
+        /// Property indicating whether the <see cref="RequestHandler"/> is currently running.
         /// </summary>
         public bool IsRunning { get; private set; }
 
         /// <summary>
-        /// Sets the degree of parallel requests that will be handled. 
-        /// Disables AutoParallelism.
-        /// Default value is null
+        /// Property that sets the degree of parallel execution of instances of the <see cref="IRequest"/> interface. 
+        /// Disables AutoParallelism when set. Default value is null.
         /// </summary>
         public int? StaticDegreeOfParallelism
         {
@@ -34,25 +33,26 @@ namespace Requests
         private int? _staticDegreeOfParallelism;
 
         /// <summary>
-        /// A function to calculate the parallelism while running
+        /// A function that calculates the degree of parallel execution of instances of the <see cref="IRequest"/> interface dynamically while running.
         /// </summary>
         public Func<int> AutoParallelism { get; set; } = () => Environment.ProcessorCount;
 
         /// <summary>
-        /// Value that is the higest possible degree of parallelism
+        /// Property that sets the maximum possible degree of parallel execution of instances of the <see cref="IRequest"/> interface.
         /// </summary>
         public int MaxParallelism { get => _maxParallelism; set { if (value < 0) throw new ArgumentOutOfRangeException(nameof(MaxParallelism)); _maxParallelism = value; } }
         private int _maxParallelism = Environment.ProcessorCount * 2;
 
         private CancellationTokenSource _cts = new();
         private readonly PauseTokenSource _pts = new();
-        /// <summary>
-        /// Main <see cref="CancellationToken"/> for all <see cref="IRequest"/>s.
-        /// </summary>
-        public CancellationToken CT => _cts.Token;
 
         /// <summary>
-        /// Two main handlers to handel requests.
+        /// The main <see cref="System.Threading.CancellationToken"/> for all instances of the <see cref="IRequest"/> interface.
+        /// </summary>
+        public CancellationToken CancellationToken => _cts.Token;
+
+        /// <summary>
+        /// Two primary handlers to handle instances of the <see cref="IRequest"/> interface.
         /// </summary>
         public static RequestHandler[] MainRequestHandlers { get; } = new RequestHandler[] { new(), new() };
 
@@ -62,14 +62,14 @@ namespace Requests
         public readonly SynchronizationContext DefaultSynchronizationContext = new();
 
         /// <summary>
-        /// Requests that are not yet Handeled
+        /// The number of instances of the <see cref="IRequest"/> interface that are not yet handled.
         /// </summary>
         public int CountRequests => _requestsChannel.Reader.Count;
 
         /// <summary>
-        /// Constructor for <see cref="RequestHandler"/> class.
+        /// Constructor for the <see cref="RequestHandler"/> class.
         /// </summary>
-        /// <param name="requests">Requests that sould be added</param>
+        /// <param name="requests">Instances of the <see cref="IRequest"/> interface that should be added.</param>
         public RequestHandler(params IRequest[] requests)
         {
             AddRequest(requests);
@@ -78,25 +78,25 @@ namespace Requests
         }
 
         /// <summary>
-        /// Adds Requests to the handler
+        /// Method to add a single instance of the <see cref="IRequest"/> interface to the handler.
         /// </summary>
-        /// <param name="request">Requests that sould be added</param>
+        /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
         public void AddRequest(IRequest request)
         => _ = _requestsChannel.Writer.WriteAsync(new((int)request.Priority, request)).AsTask();
 
 
         /// <summary>
-        /// Adds Requests to the handler
+        /// Method to add multiple instances of the <see cref="IRequest"/> interface to the handler.
         /// </summary>
-        /// <param name="requests">Requests that sould be added</param>
+        /// <param name="requests">The instances of the <see cref="IRequest"/> interface that should be added.</param>
         public void AddRequest(params IRequest[] requests)
         => Array.ForEach(requests, request => _ = _requestsChannel.Writer.WriteAsync(new((int)request.Priority, request)).AsTask());
 
 
         /// <summary>
-        /// Runs the Request and adds Requests
+        /// Method to run the instance of the <see cref="IRequest"/> interface and add instances of the <see cref="IRequest"/> interface.
         /// </summary>
-        /// <param name="request">Requests that sould be added</param>
+        /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
         public void RunRequests(IRequest request)
         {
             AddRequest(request);
@@ -104,9 +104,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Runs the Request and adds Requests
+        /// Executes the provided instances of the <see cref="IRequest"/> interface and adds them to the request queue.
         /// </summary>
-        /// <param name="requests">Requests that sould be added</param>
+        /// <param name="requests">Instances of the <see cref="IRequest"/> interface that should be added.</param>
         public void RunRequests(params IRequest[] requests)
         {
             AddRequest(requests);
@@ -114,7 +114,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Resumes the handler if it was paused
+        /// Resumes the execution of instances of the <see cref="IRequest"/> interface if the handler was previously paused.
         /// </summary>
         public void Resume()
         {
@@ -126,13 +126,12 @@ namespace Requests
         }
 
         /// <summary>
-        /// Pause the handler.
-        /// It lets running requests complete
+        /// Pauses the execution of instances of the <see cref="IRequest"/> interface, allowing any currently running requests to complete.
         /// </summary>
         public void Pause() => _pts.Pause();
 
         /// <summary>
-        /// Creates a new <see cref="CancellationTokenSource"/> if the old one was canceled.
+        /// Creates a new <see cref="CancellationTokenSource"/> if the previous one was canceled.
         /// </summary>
         public void CreateCTS()
         {
@@ -140,52 +139,55 @@ namespace Requests
             {
                 _cts.Dispose();
                 _cts = new CancellationTokenSource();
-                _requestsChannel.Options.CancellationToken = CT;
+                _requestsChannel.Options.CancellationToken = CancellationToken;
                 if (CountRequests > 0)
                     RunRequests();
             }
         }
 
         /// <summary>
-        /// Creates a new <see cref="CancellationTokenSource"/> for all main RequestHandlers
+        /// Creates a new <see cref="CancellationTokenSource"/> for all main RequestHandlers.
         /// </summary>
         public static void CreateMainCTS() => Array.ForEach(MainRequestHandlers, handler => handler.CreateCTS());
 
         /// <summary>
-        /// Cancels the main <see cref="CancellationTokenSource"/> for all Requests in this RequestHandler.
+        /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in this RequestHandler.
         /// </summary>
         public void CancelCTS() => _cts.Cancel();
 
         /// <summary>
-        /// Cancels the main <see cref="CancellationTokenSource"/> for all Requests in the Main RequestHandlers.
+        /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in the Main RequestHandlers.
         /// </summary>
         public static void CancelMainCTS() => Array.ForEach(MainRequestHandlers, handler => handler.CancelCTS());
 
         /// <summary>
-        ///  Pause the handler for all Requests in the Main RequestHandlers.
-        /// It lets running requests complete
+        /// Pauses the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers, allowing any currently running requests to complete.
         /// </summary>
         public static void PauseMain() => Array.ForEach(MainRequestHandlers, handler => handler.Pause());
 
         /// <summary>
-        /// Resumes all Requests in the Main RequestHandlers if it was paused
-        /// It lets running requests complete
+        /// Resumes the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers if they were previously paused.
         /// </summary>
         public static void ReusmeMain() => Array.ForEach(MainRequestHandlers, handler => handler.Resume());
 
 
         /// <summary>
-        /// Runs the Request if it is not running
+        /// This method is responsible for executing the instances of the  <see cref="IRequest"/> if the handler is not currently running.
+        /// It updates the degree of parallelism based on the current system environment and runs the request channel.
         /// </summary>
         public void RunRequests()
         {
-            if (IsRunning || CT.IsCancellationRequested || _pts.IsPaused)
+            if (IsRunning || CancellationToken.IsCancellationRequested || _pts.IsPaused)
                 return;
             IsRunning = true;
             UpdateAutoParallelism();
             Task.Run(async () => await RunChannel());
         }
 
+        /// <summary>
+        /// This method is responsible for running the request channel in parallel.
+        /// </summary>
+        /// <returns>async Task to await</returns>
         private async Task RunChannel()
         {
             await _requestsChannel.RunParallelReader(async (pair, ct) => await HandleRequests(pair));
@@ -194,6 +196,11 @@ namespace Requests
                 RunRequests();
         }
 
+        /// <summary>
+        /// This method is responsible for handling a given request. It starts the request and based on the state of the request.
+        /// </summary>
+        /// <param name="pair">Priority request pair</param>
+        /// <returns>async Task to await</returns>
         private async Task HandleRequests(PriorityItem<IRequest> pair)
         {
             IRequest request = pair.Item;
@@ -206,7 +213,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Call to calculate and update the AutoParallelism
+        /// Updates the degree of parallelism for executing instances of the <see cref="IRequest"/> interface based on the current system environment.
         /// </summary>
         public void UpdateAutoParallelism()
         {

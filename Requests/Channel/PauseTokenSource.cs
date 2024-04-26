@@ -1,7 +1,7 @@
 ﻿namespace Requests.Channel
 {
     /// <summary>
-    /// A class to share a <see cref="PauseToken"/> that indicates if this source was paused.
+    /// A class that provides a shared <see cref="PauseToken"/> to indicate the pause state of a source.
     /// </summary>
     public class PauseTokenSource
     {
@@ -10,19 +10,19 @@
         private readonly PauseToken? _pt = null;
 
         /// <summary>
-        /// <see cref="PauseToken"/> that indicates if this source was paused.
+        /// Gets a <see cref="PauseToken"/> that reflects the pause state of this source.
         /// </summary>
         public PauseToken Token => new(this);
 
         /// <summary>
-        /// Bool thta indicates if this <see cref="PauseTokenSource"/> was paused.
+        /// Gets a value indicating whether this <see cref="PauseTokenSource"/> is paused.
         /// </summary>
         public bool IsPaused => tcsPaused != null || _pt?.IsPaused == true;
 
         /// <summary>
-        /// Main Constructor that can link this <see cref="PauseTokenSource"/> to another <see cref="PauseTokenSource"/>.
+        /// Initializes a new instance of the <see cref="PauseTokenSource"/> class that can be linked to another <see cref="PauseTokenSource"/>.
         /// </summary>
-        /// <param name="pt">PauseToken to link</param>
+        /// <param name="pt">The <see cref="PauseToken"/> to link.</param>
         public PauseTokenSource(PauseToken? pt = null) => _pt = pt;
 
         /// <summary>
@@ -51,7 +51,7 @@
         }
 
         /// <summary>
-        /// Waits while this <see cref="PauseTokenSource"/> is paused.
+        /// Waits asynchronously while this <see cref="PauseTokenSource"/> is paused.
         /// </summary>
         internal Task WaitWhilePausedAsync() => tcsPaused?.Task ?? CompletedTask;
 

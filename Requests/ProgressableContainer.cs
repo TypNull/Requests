@@ -1,33 +1,33 @@
 ﻿namespace Requests
 {
     /// <summary>
-    /// Combinies Requests and the Progressors of these
+    /// Combines requests and their progress indicators.
     /// </summary>
-    /// <typeparam name="TRequest"></typeparam>
+    /// <typeparam name="TRequest">Type of requests to merge.</typeparam>
     public class ProgressableContainer<TRequest> : RequestContainer<TRequest>, IProgressableRequest where TRequest : IProgressableRequest
     {
         /// <summary>
-        /// Mearged Progress of all Requests.
+        /// Merged progress of all requests.
         /// </summary>
         public Progress<float> Progress => _progress;
         private readonly CombinableProgress _progress = new();
 
         /// <summary>
-        /// Main Contructor for <see cref="ProgressableContainer{TRequest}"/>.
+        /// Main constructor for <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
         public ProgressableContainer() { }
 
         /// <summary>
-        /// Constructor to merge <see cref="IRequest"/> together
+        /// Constructor to merge multiple <see cref="IRequest"/> instances.
         /// </summary>
-        /// <param name="requests"><see cref="IRequest"/>s to merge</param>
+        /// <param name="requests">Requests to merge.</param>
         public ProgressableContainer(params TRequest[] requests) => AddRange(requests);
 
         /// <summary>
-        /// Creates a new <see cref="ProgressableContainer{TRequest}"/> that megres  <see cref="ProgressableContainer{TRequest}"/> together.
+        /// Creates a new <see cref="ProgressableContainer{TRequest}"/> by merging other <see cref="ProgressableContainer{TRequest}"/> instances.
         /// </summary>
-        /// <param name="requestContainers">Other <see cref="ProgressableContainer{TRequest}"/> to merge</param>
-        /// <returns>A new <see cref="ProgressableContainer{TRequest}"/></returns>
+        /// <param name="requestContainers">Other containers to merge.</param>
+        /// <returns>A new merged container.</returns>
         public static ProgressableContainer<TRequest> MergeContainers(/*bool autoReset = false,*/ params ProgressableContainer<TRequest>[] requestContainers)
         {
             ProgressableContainer<TRequest> container = new();
@@ -36,9 +36,9 @@
         }
 
         /// <summary>
-        /// Adds a <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// Adds an <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
-        /// <param name="request">The <see cref="IRequest"/> to add.</param>
+        /// <param name="request">The request to add.</param>
         public new void Add(TRequest request)
         {
             base.Add(request);
@@ -67,9 +67,9 @@
         //}
 
         /// <summary>
-        /// Adds a range <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// Adds a range of <see cref="IRequest"/> instances to the container.
         /// </summary>
-        /// <param name="requests">The <see cref="IRequest"/> to add.</param>
+        /// <param name="requests">Requests to add.</param>
         public override void AddRange(params TRequest[] requests)
         {
             base.AddRange(requests);
@@ -77,9 +77,9 @@
         }
 
         /// <summary>
-        /// Removes a <see cref="IRequest"/> from this container.
+        /// Removes one or more <see cref="IRequest"/> instances from this container.
         /// </summary>
-        /// <param name="requests">Request to remove</param>
+        /// <param name="requests">Requests to remove.</param>
         public override void Remove(params TRequest[] requests)
         {
             base.Remove(requests);
@@ -92,7 +92,7 @@
 
 
         /// <summary>
-        /// Combines different Progressors into one.
+        /// Combines different progress trackers into one.
         /// </summary>
         private class CombinableProgress : Progress<float>
         {
@@ -101,30 +101,32 @@
             private readonly object _lock = new();
 
             /// <summary>
-            /// Read-only property describing how many <see cref="Progress{T}"/> are in this <see cref="CombinableProgress"/>.
+            /// Gets the count of attached <see cref="Progress{T}"/> instances.
             /// </summary>
             public int Count => _progressors.Count;
 
             /// <summary>
-            /// Initializes the <see cref="CombinableProgress"/>.
+            /// Initializes a new instance of the <see cref="CombinableProgress"/> class.
             /// </summary>
             public CombinableProgress() { }
 
-            /// <summary>Initializes the <see cref="CombinableProgress"/> with the specified callback.</summary>
+            /// <summary>
+            /// Initializes a new instance of the <see cref="CombinableProgress"/> class with the specified callback.
+            /// </summary>
             /// <param name="handler">
-            /// A handler to invoke for each reported progress value.  This handler will be invoked
+            /// A handler to invoke for each reported progress value. This handler will be invoked
             /// in addition to any delegates registered with the ProgressChanged event.
-            /// Depending on the <see cref="SynchronizationContext"/> instance captured by
-            /// the <see cref="Progress{T}"/> at construction, it's possible that this handler instance
+            /// Depending on the SynchronizationContext instance captured by
+            /// the Progress{T} at construction, it's possible that this handler instance
             /// could be invoked concurrently with itself.
             /// </param>
-            /// <exception cref="ArgumentNullException">The <paramref name="handler"/> is null.</exception>
+            /// <exception cref="ArgumentNullException">The handler is null.</exception>
             public CombinableProgress(Action<float> handler) : base(handler) { }
 
             /// <summary>
-            /// Attach an element to the progress. If this does not work an overflow exception is thrown.
+            /// Attaches a progress tracker to this CombinableProgress instance.
             /// </summary>
-            /// <param name="progress"><see cref="Progress{T}"/> to attach</param>
+            /// <param name="progress">The <see cref="Progress{T}"/></param>
             public void Attach(Progress<float> progress)
             {
                 lock (_lock)
@@ -136,10 +138,10 @@
             }
 
             /// <summary>
-            /// Try's to remove a progress if it was attached in available 
+            /// Attempts to remove an attached progress tracker.
             /// </summary>
-            /// <param name="progress"><see cref="Progress{T}"/> to attach</param>
-            /// <returns>bool which indicates success</returns>
+            /// <param name="progress">The <see cref="Progress{T}"/> instance to remove.</param>
+            /// <returns>True if removal was successful; otherwise, false.</returns>
             public bool TryRemove(Progress<float> progress)
             {
                 lock (_lock)
@@ -155,10 +157,10 @@
             }
 
             /// <summary>
-            /// Will be called if one Progress changed
+            /// Called when any attached progress tracker reports a change in progress.
             /// </summary>
-            /// <param name="sender"></param>
-            /// <param name="e"></param>
+            /// <param name="sender">The sender object.</param>
+            /// <param name="e">The progress value.</param>
             private void OnProgressChanged(object? sender, float e)
             {
                 double average = 0f;
