@@ -73,10 +73,28 @@ namespace Requests
         /// Accesses all <see cref="IRequest"/> instances in this container.
         /// </summary>
         /// <returns>Returns an array of <see cref="IRequest"/> instances.</returns>
-        public TRequest this[int key]
+        public virtual TRequest this[int key]
         {
             get => _requests[key];
-            set => _requests[key] = value;
+            set
+            {
+                if (!_requests[key].Equals(value))
+                {
+                    _requests[key].StateChanged -= StateChanged;
+                    Remove(_requests[key]);
+                    _requests[key] = value;
+                    if (_isCanceled)
+                        _requests[key].Cancel();
+                    else if (_disposed)
+                        _requests[key].Dispose();
+                    else if (!_isrunning)
+                        _requests[key].Pause();
+
+                    _requests[key].StateChanged += OnStateChanged;
+                    NewTaskCompletion();
+                    OnStateChanged(this, _requests[key].State);
+                }
+            }
         }
 
         /// <summary>

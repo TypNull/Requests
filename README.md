@@ -44,7 +44,8 @@ This library includes the following classes:
 - **ProgressableContainer:** A container class to merge requests together that are using a `Progress` object to report the progress.
 - **RequestHandler:** A class to handle requests. Every handler is independent of any other handler.
 
-> Expand and use as you like!<br />
+> Expand and use as you like!
+>
 > Because handling requests should be as delightful as a warm cup of cocoa on a winter day.
 
  For additional information, refer to the Requests [Wiki](https://github.com/TypNull/Requests/wiki/).
@@ -95,7 +96,7 @@ Create your own requests with a sprinkle of magic! ✨
 
 ## 🌟 Contributing
 
-Join our quest! If you'd like to contribute to this library, submit a pull request or open an issue. We appreciate your help in making **Requests** the best it can be!
+Join our quest! If you'd like to contribute to this library, submit a pull request or open an issue. We appreciate your help in making `Requests` the best it can be!
 
 ## 📜 License
 

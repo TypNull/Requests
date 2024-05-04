@@ -36,13 +36,28 @@
         }
 
         /// <summary>
-        /// Adds an <see cref="IRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// Adds an <see cref="IProgressableRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
         /// </summary>
         /// <param name="request">The request to add.</param>
         public new void Add(TRequest request)
         {
             base.Add(request);
             AttachProgress(request);
+        }
+
+        /// <summary>
+        /// Accesses all <see cref="IProgressableRequest"/> to the <see cref="ProgressableContainer{TRequest}"/>.
+        /// </summary>
+        /// <returns>Returns an array of <see cref="IProgressableRequest"/> instances.</returns>
+        public override TRequest this[int key]
+        {
+            get => base[key];
+            set
+            {
+                _progress.TryRemove(base[key].Progress);
+                base[key] = value;
+                _progress.Attach(base[key].Progress);
+            }
         }
 
         private void AttachProgress(TRequest request)
@@ -67,7 +82,7 @@
         //}
 
         /// <summary>
-        /// Adds a range of <see cref="IRequest"/> instances to the container.
+        /// Adds a range of <see cref="IProgressableRequest"/> instances to the container.
         /// </summary>
         /// <param name="requests">Requests to add.</param>
         public override void AddRange(params TRequest[] requests)
@@ -77,7 +92,7 @@
         }
 
         /// <summary>
-        /// Removes one or more <see cref="IRequest"/> instances from this container.
+        /// Removes one or more <see cref="IProgressableRequest"/> instances from this container.
         /// </summary>
         /// <param name="requests">Requests to remove.</param>
         public override void Remove(params TRequest[] requests)
