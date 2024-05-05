@@ -191,7 +191,7 @@ namespace Requests
 
             _cts?.Dispose();
             _ctr.Unregister();
-
+            _isFinished.TrySetCanceled();
             GC.SuppressFinalize(this);
         }
 
@@ -274,7 +274,7 @@ namespace Requests
         /// <summary>
         /// Updates the Task's status based on the current state of the <see cref="Request{TOptions, TCompleated, TFailed}"/>.
         /// </summary>
-        private void SetTaskState()
+        protected void SetTaskState()
         {
             switch (State)
             {
@@ -287,7 +287,6 @@ namespace Requests
                 case RequestState.Cancelled:
                     _isFinished.TrySetCanceled();
                     break;
-
             }
         }
 

@@ -20,7 +20,7 @@
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Fix RequestContainer Array access</PackageReleaseNotes>
+    <PackageReleaseNotes>Request Dispose Task not finished Fix</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
