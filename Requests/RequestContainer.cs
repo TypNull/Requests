@@ -81,7 +81,6 @@ namespace Requests
                 if (!_requests[key].Equals(value))
                 {
                     _requests[key].StateChanged -= StateChanged;
-                    Remove(_requests[key]);
                     _requests[key] = value;
                     if (_isCanceled)
                         _requests[key].Cancel();
