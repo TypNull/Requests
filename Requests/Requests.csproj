@@ -16,11 +16,11 @@
     <PackageTags>async; channel; priority; request; parallel; </PackageTags>
     <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
     <PackageIcon>logo.png</PackageIcon>
-    <Version>2.1.1</Version>
+    <Version>2.1.2</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Fix RequestContainer Array access</PackageReleaseNotes>
+    <PackageReleaseNotes>Rewind RequestReturn Constructor</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

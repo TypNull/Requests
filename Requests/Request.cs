@@ -362,6 +362,21 @@ namespace Requests
             /// </summary>
             public RequestReturn() { }
 
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="Request{TOptions, TCompleated, TFailed}.RequestReturn"/> class.
+            /// </summary>
+            /// <param name="successful">Indicates whether the operation was successful.</param>
+            /// <param name="compleatedReturn">The object to be returned if the operation completed successfully.</param>
+            /// <param name="failedReturn">The object to be returned if the operation failed.</param>
+            public RequestReturn(bool successful, TCompleated compleatedReturn, TFailed failedReturn)
+            {
+                Successful = successful;
+                CompleatedReturn = compleatedReturn;
+                FailedReturn = failedReturn;
+            }
+
+
             /// <summary>
             /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleated"/> delegate is invoked.
             /// </summary>
