@@ -1,54 +1,122 @@
 using Requests;
+using Requests.Options;
 
 namespace UnitTest
 {
     [TestClass]
-    public class RequestTest
+    public class RequestTests
     {
-        [TestMethod]
-        public async Task ContainerTaskRemoveTest()
+        private class TestRequest : Request<RequestOptions<bool, bool>, bool, bool>
         {
-            RequestContainer<OwnRequest> container = new();
-            OwnRequest longRequest = new(async (token) => { await Task.Delay(10000); return true; });
-            OwnRequest request = new(async (token) => { await Task.Delay(5000); return true; });
-            container.Add(new OwnRequest(async (token) => { await Task.Delay(3000); return true; }));
-            _ = Task.Run(async () => { await Task.Delay(2000); container.Add(longRequest); });
-            _ = Task.Run(async () => { await Task.Delay(2000); container.Add(request); });
-            _ = Task.Run(async () => { await Task.Delay(800); container.Remove(longRequest); });
-            await container.Task;
-            Console.WriteLine("Long Request State: " + longRequest.State);
-            Console.WriteLine("Container State: " + container.State);
+            public TestRequest(RequestOptions<bool, bool>? options = null) : base(options) { }
+
+            protected override Task<RequestReturn> RunRequestAsync()
+            {
+                return Task.FromResult(new RequestReturn(true, true, false));
+            }
         }
 
         [TestMethod]
-        public async Task ContainerTaskTest()
+        public async Task CancelRequest_ShouldChangeStateToCancelled()
         {
-            RequestContainer<OwnRequest> container = new();
-            OwnRequest longRequest = new(async (token) => { await Task.Delay(10000); return true; });
-            OwnRequest request = new(async (token) => { await Task.Delay(5000); return true; });
-            container.Add(new OwnRequest(async (token) => { await Task.Delay(3000); return true; }));
-            _ = Task.Run(async () => { await Task.Delay(2000); container.Add(longRequest); });
-            _ = Task.Run(async () => { await Task.Delay(2000); container.Add(request); });
-            await container.Task;
-            Console.WriteLine("Long Request State: " + longRequest.State);
-            Console.WriteLine("Container State: " + container.State);
+            // Arrange
+            var request = new TestRequest();
+
+            // Act
+            request.Cancel();
+            try
+            {
+                await request.Task;
+            }
+            catch (Exception)
+            {
+            }
+
+            // Assert
+            Assert.AreEqual(RequestState.Cancelled, request.State);
         }
 
         [TestMethod]
-        public async Task ContainerTaskFinishedTest()
+        public async Task DisposeRequest_ShouldCancelAndDispose()
         {
-            RequestContainer<OwnRequest> container = new();
-            OwnRequest longRequest = new(async (token) => { await Task.Delay(10000); return true; });
-            container.Add(new(async (token) => { await Task.Delay(3000); return true; }));
-            container.Add(new OwnRequest(async (token) => { await Task.Delay(1000); return true; }));
-            await container.Task;
-            Console.WriteLine("Long Request State: " + longRequest.State);
-            Console.WriteLine("Container State: " + container.State);
-            container.Add(longRequest);
-            Console.WriteLine("Container State: " + container.State);
-            await container.Task;
-            Console.WriteLine("End Container State: " + container.State);
-            Console.WriteLine("Long Request State: " + longRequest.State);
+            // Arrange
+            var request = new TestRequest();
+
+            // Act
+            request.Dispose();
+            try
+            {
+                await request.Task;
+            }
+            catch (Exception)
+            {
+            }
+
+            Assert.IsTrue(request.Task.IsCanceled);
+        }
+
+        [TestMethod]
+        public void PauseRequest_ShouldChangeStateToPaused()
+        {
+            // Arrange
+            var request = new TestRequest();
+
+            // Act
+            request.Pause();
+
+            // Assert
+            Assert.AreEqual(RequestState.Paused, request.State);
+        }
+
+        [TestMethod]
+        public void StartRequestAfterPause_ShouldChangeStateToIdle()
+        {
+            // Arrange
+            var request = new TestRequest();
+            request.Pause();
+
+            // Act
+            request.Start();
+
+            // Assert
+            Assert.AreEqual(RequestState.Idle, request.State);
+        }
+
+        [TestMethod]
+        public void RequestWithDeployDelay_ShouldChangeStateToWaiting()
+        {
+            // Arrange
+            var request = new TestRequest
+            {
+                DeployDelay = TimeSpan.FromSeconds(2)
+            };
+
+            // Act
+            request.Start();
+
+            // Assert
+            Assert.AreEqual(RequestState.Waiting, request.State);
+        }
+
+        [TestMethod]
+        public async Task RequestWithCancellation_ShouldCancel()
+        {
+            // Arrange
+            var cts = new CancellationTokenSource();
+            var options = new RequestOptions<bool, bool> { CancellationToken = cts.Token };
+            var request = new TestRequest(options);
+            // Act
+            cts.Cancel();
+            try
+            {
+                await request.Task;
+            }
+            catch (Exception)
+            {
+            }
+
+            // Assert
+            Assert.AreEqual(RequestState.Cancelled, request.State);
         }
     }
 }

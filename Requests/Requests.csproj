@@ -16,11 +16,13 @@
     <PackageTags>async; channel; priority; request; parallel; </PackageTags>
     <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
     <PackageIcon>logo.png</PackageIcon>
-    <Version>2.1.4</Version>
+    <Version>2.1.5</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Request Dispose Task not finished Fix</PackageReleaseNotes>
+    <PackageReleaseNotes>Fix CTS cancellation issue
+Enhance RequestContainer concurrency
+Expand unit test coverage</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

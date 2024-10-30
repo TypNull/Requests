@@ -136,7 +136,7 @@ namespace Requests
             _cts?.Dispose();
             _ctr.Unregister();
             _cts = CreateNewCTS();
-            _ctr = Token.Register(() => SynchronizationContext.Post((o) => Options.RequestCancelled?.Invoke((IRequest)o!), this));
+            _ctr = Token.Register(() => { Cancel(); SynchronizationContext.Post((o) => Options.RequestCancelled?.Invoke((IRequest)o!), this); });
         }
 
         /// <summary>
@@ -221,7 +221,7 @@ namespace Requests
             SetResult(returnItem);
         }
 
-        private async Task<Request<TOptions, TCompleated, TFailed>.RequestReturn> TryRunRequestAsync()
+        private async Task<RequestReturn> TryRunRequestAsync()
         {
             RequestReturn returnItem = new();
             try
@@ -246,7 +246,7 @@ namespace Requests
             SetTaskState();
         }
 
-        private void EvalueateRequest(Request<TOptions, TCompleated, TFailed>.RequestReturn returnItem)
+        private void EvalueateRequest(RequestReturn returnItem)
         {
             if (State != RequestState.Running)
                 return;

@@ -10,6 +10,7 @@ namespace Requests
     public class RequestContainer<TRequest> : IEnumerable<TRequest>, IRequest where TRequest : IRequest
     {
         private volatile TRequest[] _requests = Array.Empty<TRequest>();
+        private int _count;
         private bool _isrunning = true;
         private bool _isCanceled = false;
         private bool _disposed = false;
@@ -17,6 +18,7 @@ namespace Requests
         private CancellationTokenSource _taskCancelationTokenSource = new();
         private RequestState _state = RequestState.Paused;
         private RequestPriority _priority = RequestPriority.Normal;
+        private int _writeInProgress; // 0 means no write, 1 means write in progress
 
         /// <summary>
         /// Represents the combined task of the requests.
@@ -51,7 +53,7 @@ namespace Requests
         /// <summary>
         /// Gets the count of <see cref="IRequest"/> instances contained in the <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
-        public int Length => _requests.Length;
+        public int Length => _count; // Updated to use the new _count field
 
         /// <summary>
         /// The synchronization context captured when this object was created. This will never be null.
@@ -61,7 +63,7 @@ namespace Requests
         /// <summary>
         /// All exceptions that were thrown by the requests.
         /// </summary>
-        public AggregateException? Exception => new(_requests.Where(x => x.Exception != null).Select(x => x.Exception!));
+        public AggregateException? Exception => new(GetStored().Where(x => x?.Exception != null).Select(x => x!.Exception!));
 
         /// <summary>
         /// Constructor that merges <see cref="IRequest"/> instances together.
@@ -127,7 +129,16 @@ namespace Requests
                 request.Pause();
 
             request.StateChanged += OnStateChanged;
-            _requests = CreateArrayWithNewItems(request);
+            while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
+                Thread.Yield();
+            if (_requests.Length == _count)
+                Grow();
+
+            _requests[_count] = request;
+            _count++;
+
+            Interlocked.Exchange(ref _writeInProgress, 0); // Release the write lock
+
             NewTaskCompletion();
             OnStateChanged(this, request.State);
         }
@@ -141,7 +152,8 @@ namespace Requests
             _taskCancelationTokenSource = new();
             if (Task.IsCompleted)
                 _task = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Task.WhenAll(_requests.Select(request => request.Task)).ContinueWith(task => _task?.TrySetResult(), _taskCancelationTokenSource.Token);
+
+            Task.WhenAll(GetStored().Select(request => request.Task)).ContinueWith(task => _task?.TrySetResult(), _taskCancelationTokenSource.Token);
         }
 
         /// <summary>
@@ -163,22 +175,33 @@ namespace Requests
             else if (!_isrunning)
                 Array.ForEach(requests, request => request.Pause());
             Array.ForEach(requests, request => request.StateChanged += OnStateChanged);
-            _requests = CreateArrayWithNewItems(requests);
+
+            while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
+                Thread.Yield();
+            while (_requests.Length < _count + requests.Length)
+                Grow();
+
+            Array.Copy(requests, 0, _requests, _count, requests.Length);
+            _count += requests.Length;
+
+            Interlocked.Exchange(ref _writeInProgress, 0); // Release the write lock
             NewTaskCompletion();
             State = CalculateState();
         }
 
         /// <summary>
-        /// Creates a new array that includes the existing requests and the new items.
+        /// Increases the capacity of the <see cref="RequestContainer{TRequest}"/> to accommodate additional elements.
         /// </summary>
-        /// <param name="items">The new items to be added to the array.</param>
-        /// <returns>A new array containing the existing and new items.</returns>
-        private TRequest[] CreateArrayWithNewItems(params TRequest[] items)
+        private void Grow()
         {
-            TRequest[] result = new TRequest[_requests.Length + items.Length];
-            _requests.CopyTo(result, 0);
-            items.CopyTo(result, _requests.Length);
-            return result;
+            const int MinimumGrow = 4;
+            int capacity = (int)(_requests.Length * 2L);
+            if (capacity < _requests.Length + MinimumGrow)
+                capacity = _requests.Length + MinimumGrow;
+
+            TRequest[] newArray = new TRequest[capacity];
+            _requests.CopyTo(newArray, 0);
+            _requests = newArray;
         }
 
         /// <summary>
@@ -202,7 +225,7 @@ namespace Requests
         private RequestState CalculateState()
         {
             RequestState state;
-            IEnumerable<int> states = _requests.Select(req => (int)req.State);
+            IEnumerable<int> states = GetStored().Select(req => (int)req.State);
             int[] counter = new int[7];
             foreach (int value in states)
                 counter[value]++;
@@ -217,7 +240,7 @@ namespace Requests
                 state = RequestState.Idle;
             else if (counter[4] > 0)
                 state = RequestState.Waiting;
-            else if (counter[2] == Length)
+            else if (counter[2] == _count)
                 state = RequestState.Compleated;
             else if (counter[3] > 0)
                 state = RequestState.Paused;
@@ -232,11 +255,10 @@ namespace Requests
             if (_isrunning)
                 return;
             _isrunning = true;
-            foreach (TRequest request in _requests)
-                _ = TrySetIdle();
-            foreach (TRequest request in _requests.Where(x => x.State == RequestState.Idle))
+            foreach (TRequest request in GetStored())
+                _ = request.TrySetIdle();
+            foreach (TRequest request in GetStored().Where(x => x.State == RequestState.Idle))
                 await request.StartRequestAsync();
-
 
             _isrunning = false;
         }
@@ -248,8 +270,15 @@ namespace Requests
         public virtual void Remove(params TRequest[] requests)
         {
             Array.ForEach(requests, request => request.StateChanged -= StateChanged);
-            _requests = _requests.Where(x => !requests.Any(y => y.Equals(x))).ToArray();
-            if (_requests.Length > 0 && !Task.IsCompleted)
+
+            while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
+                Thread.Yield();
+            _requests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+            _count = _requests.Length;
+
+            Interlocked.Exchange(ref _writeInProgress, 0); // Release the write lock
+
+            if (_count > 0 && !Task.IsCompleted)
                 NewTaskCompletion();
             else
                 _task = null;
@@ -263,7 +292,9 @@ namespace Requests
         public void Cancel()
         {
             _isCanceled = true;
-            Array.ForEach(_requests, request => request.Cancel());
+            foreach (var request in GetStored())
+                request.Cancel();
+
         }
 
         /// <summary>
@@ -274,7 +305,7 @@ namespace Requests
             if (_isrunning)
                 return;
             _isrunning = true;
-            foreach (TRequest? request in _requests)
+            foreach (TRequest request in GetStored())
                 request.Start();
         }
 
@@ -284,7 +315,7 @@ namespace Requests
         public void Pause()
         {
             _isrunning = false;
-            foreach (TRequest? request in _requests)
+            foreach (TRequest request in GetStored())
                 request.Pause();
         }
 
@@ -297,7 +328,7 @@ namespace Requests
                 return;
             _disposed = true;
             StateChanged = null;
-            foreach (TRequest? request in _requests)
+            foreach (TRequest request in GetStored())
                 request.Dispose();
             GC.SuppressFinalize(this);
         }
@@ -306,10 +337,11 @@ namespace Requests
         /// Provides an enumerator that iterates through the <see cref="RequestContainer{TRequest}"/> 
         /// </summary>
         /// <returns> A  <see cref="RequestContainer{TRequest}"/> .Enumerator for the <see cref="RequestContainer{TRequest}"/> .</returns>
-        public IEnumerator<TRequest> GetEnumerator() => ((IEnumerable<TRequest>)_requests).GetEnumerator();
+        public IEnumerator<TRequest> GetEnumerator() => GetStored().GetEnumerator();
+
 
         /// <inheritdoc/>
-        IEnumerator IEnumerable.GetEnumerator() => _requests.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetStored().GetEnumerator();
 
         /// <summary>
         /// Attempts to set all <see cref="IRequest"/> objects in the container's <see cref="State"/> to idle.
@@ -318,9 +350,15 @@ namespace Requests
         /// <returns>True if all <see cref="IRequest"/> objects are in an idle <see cref="RequestState"/>, otherwise false.</returns>
         public bool TrySetIdle()
         {
-            foreach (TRequest request in _requests)
+            foreach (TRequest request in GetStored())
                 _ = request.TrySetIdle();
             return State == RequestState.Idle;
         }
+
+        /// <summary>
+        /// Gets the stored requests that are non-null.
+        /// </summary>
+        /// <returns>An enumerable of non-null requests.</returns>
+        private IEnumerable<TRequest> GetStored() => _requests[.._count].Where(req => req != null)!;
     }
 }
