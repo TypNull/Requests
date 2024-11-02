@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 
 namespace Requests.Channel
@@ -9,12 +8,12 @@ namespace Requests.Channel
     /// </summary>
     /// <param name="Priority">Priority of the item</param>
     /// <param name="Item">Item that the channel uses</param>
-    public record PriorityItem<TElement>(int Priority, TElement Item);
+    public record PriorityItem<TElement>(float Priority, TElement Item);
     /// <summary>
     /// A implementation of channel with a priority listing
     /// </summary>
     /// <typeparam name="TElement"></typeparam>
-    public class PriorityChannel<TElement> : Channel<PriorityItem<TElement>>
+    public class FixedPriorityChannel<TElement> : Channel<PriorityItem<TElement>>, IPriorityChannel<TElement>
     {
         /// <summary>Task that indicates the channel has completed.</summary>
         private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -23,41 +22,60 @@ namespace Requests.Channel
         /// <summary>Readers blocked reading from the channel.</summary>
         private readonly Deque<AsyncOperation<PriorityItem<TElement>>> _blockedReaders = new();
 
-        /// <summary>Readers waiting for a notification that data is available.</summary>
+        /// <summary>
+        /// The tail of the linked list of readers waiting for data availability notifications.
+        /// </summary>
         private AsyncOperation<bool>? _waitingReadersTail;
-        /// <summary>Set to non-null once Complete has been called.</summary>
+
+        /// <summary>
+        /// Indicates whether the writing process has completed. Non-null if writing is done.
+        /// </summary>
         private Exception? _doneWriting;
 
-        // The number of queues we store internally.
+        /// <summary>
+        /// The number of priority levels used internally for managing data queues.
+        /// </summary>
         private readonly int _priorityCount = 0;
-        private int m_count = 0;
 
-        internal ParallelChannelOptions Options { get; } = new();
+        /// <summary>
+        /// The current count of items in the data structure.
+        /// </summary>
+        private int _count = 0;
+
+        /// <summary>
+        /// Gets the current count of items in the data structure.
+        /// </summary>
+        public int Count => _count;
+
+        /// <summary>
+        /// Gets the options for configuring the behavior of the parallel channel, such as maximum degree of parallelism.
+        /// </summary>
+        public ParallelChannelOptions Options { get; } = new();
 
         /// <summary>
         /// Initialize the priority channel.
         /// </summary>
         /// <param name="priCount">How many prioritys the channel sould handle</param>
-        internal PriorityChannel(int priCount)
+        internal FixedPriorityChannel(int priCount)
         {
             _priorityCount = priCount;
             _queues = new ConcurrentQueue<PriorityItem<TElement>>[_priorityCount];
             for (int i = 0; i < _priorityCount; i++)
                 _queues[i] = new ConcurrentQueue<PriorityItem<TElement>>();
 
-            Reader = new PriorityChannelReader(this);
-            Writer = new PriorityChannelWriter(this);
+            Reader = new FixedPriorityChannelReader(this);
+            Writer = new FixedPriorityChannelWriter(this);
 
         }
 
         /// <summary>
-        /// Executes a parallel for-each operation on this instance of <see cref="PriorityChannel{TElement}"/>,
+        /// Executes a parallel for-each operation on this instance of <see cref="FixedPriorityChannel{TElement}"/>,
         /// enforcing a dynamic maximum degree of parallelism.
         /// </summary>
         /// <param name="body">Excecution function of parallel reader</param>
         /// <returns>A Task</returns>
         /// <exception cref="ArgumentNullException"></exception>
-        internal Task RunParallelReader(Func<PriorityItem<TElement>, CancellationToken, ValueTask> body)
+        public Task RunParallelReader(Func<PriorityItem<TElement>, CancellationToken, ValueTask> body)
         {
             _ = body ?? throw new ArgumentNullException(nameof(body));
 
@@ -104,15 +122,21 @@ namespace Requests.Channel
             }
         }
 
+        /// <summary>
+        /// Attempts to remove the specified item from the priority channel.
+        /// </summary>
+        /// <param name="item">The item to remove.</param>
+        /// <returns>True if the item was successfully removed; otherwise, false.</returns>
+        public bool TryRemove(PriorityItem<TElement> item) => ((FixedPriorityChannelWriter)Writer).TryRemove(item);
 
 
-        private sealed class PriorityChannelReader : ChannelReader<PriorityItem<TElement>>
+        private sealed class FixedPriorityChannelReader : ChannelReader<PriorityItem<TElement>>
         {
-            internal readonly PriorityChannel<TElement> _parent;
+            internal readonly FixedPriorityChannel<TElement> _parent;
             private readonly AsyncOperation<PriorityItem<TElement>> _readerSingleton;
             private readonly AsyncOperation<bool> _waiterSingleton;
 
-            internal PriorityChannelReader(PriorityChannel<TElement> parent)
+            internal FixedPriorityChannelReader(FixedPriorityChannel<TElement> parent)
             {
                 _parent = parent;
                 _readerSingleton = new AsyncOperation<PriorityItem<TElement>>(true, pooled: true);
@@ -125,18 +149,18 @@ namespace Requests.Channel
 
             public override bool CanPeek => true;
 
-            public override int Count => _parent.m_count;
+            public override int Count => _parent._count;
 
             public override ValueTask<PriorityItem<TElement>> ReadAsync(CancellationToken cancellationToken)
             {
                 if (cancellationToken.IsCancellationRequested)
                     return new ValueTask<PriorityItem<TElement>>(Task.FromCanceled<PriorityItem<TElement>>(cancellationToken));
 
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
                 for (int i = 0; i < parent._priorityCount; i++)
                     if (parent._queues[i].TryDequeue(out PriorityItem<TElement>? item))
                     {
-                        Interlocked.Decrement(ref parent.m_count);
+                        Interlocked.Decrement(ref parent._count);
                         CompleteIfDone(parent);
                         return new ValueTask<PriorityItem<TElement>>(item);
                     }
@@ -144,14 +168,14 @@ namespace Requests.Channel
                 return LockReadAsync(parent, cancellationToken);
             }
 
-            private ValueTask<PriorityItem<TElement>> LockReadAsync(PriorityChannel<TElement> parent, CancellationToken cancellationToken)
+            private ValueTask<PriorityItem<TElement>> LockReadAsync(FixedPriorityChannel<TElement> parent, CancellationToken cancellationToken)
             {
                 lock (parent.SyncObj)
                 {
                     for (int i = 0; i < parent._priorityCount; i++)
                         if (parent._queues[i].TryDequeue(out PriorityItem<TElement>? item))
                         {
-                            Interlocked.Decrement(ref parent.m_count);
+                            Interlocked.Decrement(ref parent._count);
                             CompleteIfDone(parent);
                             return new ValueTask<PriorityItem<TElement>>(item);
                         }
@@ -182,12 +206,12 @@ namespace Requests.Channel
             /// <returns>A bool that indicates success</returns>
             public override bool TryRead([MaybeNullWhen(false)] out PriorityItem<TElement> item)
             {
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
 
                 for (int i = 0; i < parent._priorityCount; i++)
                     if (parent._queues[i].TryDequeue(out item))
                     {
-                        Interlocked.Decrement(ref parent.m_count);
+                        Interlocked.Decrement(ref parent._count);
                         CompleteIfDone(parent);
                         return true;
                     }
@@ -198,7 +222,7 @@ namespace Requests.Channel
 
             public override bool TryPeek([MaybeNullWhen(false)] out PriorityItem<TElement> item)
             {
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
                 for (int i = 0; i < _parent._priorityCount; i++)
                     if (parent._queues[i].TryPeek(out item))
                         return true;
@@ -206,7 +230,7 @@ namespace Requests.Channel
                 return false;
             }
 
-            private static void CompleteIfDone(PriorityChannel<TElement> parent)
+            private static void CompleteIfDone(FixedPriorityChannel<TElement> parent)
             {
                 if (parent._doneWriting != null && parent._queues.All(x => x.IsEmpty))
                     ChannelUtilities.Complete(parent._completion, parent._doneWriting);
@@ -223,7 +247,7 @@ namespace Requests.Channel
                     return new ValueTask<bool>(true);
 
 
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
 
                 lock (parent.SyncObj)
                 {
@@ -253,14 +277,14 @@ namespace Requests.Channel
 
         }
 
-        private sealed class PriorityChannelWriter : ChannelWriter<PriorityItem<TElement>>
+        private sealed class FixedPriorityChannelWriter : ChannelWriter<PriorityItem<TElement>>
         {
-            internal readonly PriorityChannel<TElement> _parent;
-            internal PriorityChannelWriter(PriorityChannel<TElement> parent) => _parent = parent;
+            internal readonly FixedPriorityChannel<TElement> _parent;
+            internal FixedPriorityChannelWriter(FixedPriorityChannel<TElement> parent) => _parent = parent;
 
             public override bool TryComplete(Exception? error)
             {
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
                 bool completeTask;
 
                 lock (parent.SyncObj)
@@ -276,7 +300,7 @@ namespace Requests.Channel
                 return true;
             }
 
-            private static void CompleatChannelUtils(Exception? error, PriorityChannel<TElement> parent, bool completeTask)
+            private static void CompleatChannelUtils(Exception? error, FixedPriorityChannel<TElement> parent, bool completeTask)
             {
                 if (completeTask)
                     ChannelUtilities.Complete(parent._completion, error);
@@ -287,17 +311,17 @@ namespace Requests.Channel
 
             public override bool TryWrite(PriorityItem<TElement> pair)
             {
-                PriorityChannel<TElement> parent = _parent;
+                FixedPriorityChannel<TElement> parent = _parent;
                 while (true)
                 {
-                    if (PriorityChannel<TElement>.PriorityChannelWriter.TryWriteLock(parent, pair, out AsyncOperation<PriorityItem<TElement>>? blockedReader, out AsyncOperation<bool>? waitingReadersTail) is bool result)
+                    if (FixedPriorityChannel<TElement>.FixedPriorityChannelWriter.TryWriteLock(parent, pair, out AsyncOperation<PriorityItem<TElement>>? blockedReader, out AsyncOperation<bool>? waitingReadersTail) is bool result)
                         return result;
 
                     if (blockedReader != null)
                     {
                         if (blockedReader.TrySetResult(pair))
                         {
-                            Interlocked.Increment(ref parent.m_count);
+                            Interlocked.Increment(ref parent._count);
                             return true;
                         }
                     }
@@ -309,7 +333,7 @@ namespace Requests.Channel
                 }
             }
 
-            private static bool? TryWriteLock(PriorityChannel<TElement> parent, PriorityItem<TElement> pair, out AsyncOperation<PriorityItem<TElement>>? blockedReader, out AsyncOperation<bool>? waitingReadersTail)
+            private static bool? TryWriteLock(FixedPriorityChannel<TElement> parent, PriorityItem<TElement> pair, out AsyncOperation<PriorityItem<TElement>>? blockedReader, out AsyncOperation<bool>? waitingReadersTail)
             {
                 waitingReadersTail = null;
                 blockedReader = null;
@@ -321,8 +345,8 @@ namespace Requests.Channel
 
                     if (parent._blockedReaders.IsEmpty)
                     {
-                        parent._queues[pair.Priority].Enqueue(pair);
-                        Interlocked.Increment(ref parent.m_count);
+                        parent._queues[(int)pair.Priority].Enqueue(pair);
+                        Interlocked.Increment(ref parent._count);
                         waitingReadersTail = parent._waitingReadersTail;
                         if (waitingReadersTail == null)
                             return true;
@@ -350,6 +374,23 @@ namespace Requests.Channel
                 cancellationToken.IsCancellationRequested ? new ValueTask(Task.FromCanceled(cancellationToken)) :
                 TryWrite(item) ? default :
                 new ValueTask(Task.FromException(ChannelUtilities.CreateInvalidCompletionException(_parent._doneWriting)));
+
+            /// <summary>
+            /// Attempts to remove the specified item from the priority channel.
+            /// </summary>
+            /// <param name="item">The item to remove.</param>
+            /// <returns>True if the item was successfully removed; otherwise, false.</returns>
+            public bool TryRemove(PriorityItem<TElement> item)
+            {
+                FixedPriorityChannel<TElement> parent = _parent;
+                lock (parent.SyncObj)
+                {
+                    if (parent._doneWriting != null)
+                        return false;
+
+                    return parent._queues[(int)item.Priority].TryRemove(item);
+                }
+            }
         }
 
         /// <summary>
@@ -373,8 +414,6 @@ namespace Requests.Channel
                 return result;
             }
         }
-
-
 
         /// <summary>Gets the object used to synchronize access to all state on this instance.</summary>
         private object SyncObj => _queues;

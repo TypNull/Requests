@@ -42,8 +42,8 @@ namespace UnitTest
         public void TestAddAndLength()
         {
             var container = new RequestContainer<MockRequest> { new() };
-            Assert.AreEqual(1, container.Length);
-            Debug.WriteLine($"Length after adding one request: {container.Length}");
+            Assert.AreEqual(1, container.Count);
+            Debug.WriteLine($"Count after adding one request: {container.Count}");
         }
 
         [TestMethod]
@@ -51,8 +51,8 @@ namespace UnitTest
         {
             var container = new RequestContainer<MockRequest>();
             container.AddRange(new MockRequest(), new MockRequest());
-            Assert.AreEqual(2, container.Length);
-            Debug.WriteLine($"Length after adding two requests: {container.Length}");
+            Assert.AreEqual(2, container.Count);
+            Debug.WriteLine($"Count after adding two requests: {container.Count}");
         }
 
         [TestMethod]
@@ -143,8 +143,8 @@ namespace UnitTest
             container1.Add(new MockRequest());
             container2.Add(new MockRequest());
             var mergedContainer = RequestContainer<MockRequest>.MergeContainers(container1, container2);
-            Assert.AreEqual(2, mergedContainer.Length);
-            Debug.WriteLine($"Length of merged container: {mergedContainer.Length}");
+            Assert.AreEqual(2, mergedContainer.Count);
+            Debug.WriteLine($"Count of merged container: {mergedContainer.Count}");
         }
 
         [TestMethod]
@@ -175,19 +175,19 @@ namespace UnitTest
             {
                 tasks.Add(Task.Run(() =>
                 {
-                    var request = container[i % container.Length];
+                    var request = container[i % container.Count];
                     Assert.IsNotNull(request);
                 }));
 
                 tasks.Add(Task.Run(() =>
                 {
-                    container[i % container.Length] = new MockRequest();
+                    container[i % container.Count] = new MockRequest();
                 }));
             }
 
             Task.WaitAll(tasks.ToArray());
-            Assert.AreEqual(1000, container.Length);
-            Debug.WriteLine($"Length after multithreaded reading and writing: {container.Length}");
+            Assert.AreEqual(1000, container.Count);
+            Debug.WriteLine($"Count after multithreaded reading and writing: {container.Count}");
         }
 
         [TestMethod]
@@ -201,7 +201,7 @@ namespace UnitTest
                 tasks.Add(Task.Run(() => container.Add(new MockRequest())));
                 tasks.Add(Task.Run(() =>
                 {
-                    if (container.Length > 0)
+                    if (container.Count > 0)
                     {
                         container.Remove(container[0]);
                     }
@@ -209,7 +209,7 @@ namespace UnitTest
             }
 
             Task.WaitAll(tasks.ToArray());
-            Debug.WriteLine($"Length after multithreaded adding and removing: {container.Length}");
+            Debug.WriteLine($"Count after multithreaded adding and removing: {container.Count}");
         }
 
         [TestMethod]
@@ -226,20 +226,20 @@ namespace UnitTest
             {
                 tasks.Add(Task.Run(() =>
                 {
-                    var request = container[i % container.Length];
+                    var request = container[i % container.Count];
                     Assert.IsNotNull(request);
                 }));
 
                 tasks.Add(Task.Run(() =>
                 {
-                    container[i % container.Length] = new MockRequest();
+                    container[i % container.Count] = new MockRequest();
                 }));
 
                 tasks.Add(Task.Run(() => container.Add(new MockRequest())));
 
                 tasks.Add(Task.Run(() =>
                 {
-                    if (container.Length > 0)
+                    if (container.Count > 0)
                     {
                         container.Remove(container[0]);
                     }
@@ -247,7 +247,7 @@ namespace UnitTest
             }
 
             Task.WaitAll(tasks.ToArray());
-            Debug.WriteLine($"Length after multithreaded mixed operations: {container.Length}");
+            Debug.WriteLine($"Count after multithreaded mixed operations: {container.Count}");
         }
 
         [TestMethod]
@@ -260,8 +260,8 @@ namespace UnitTest
                 tasks.Add(Task.Run(() => container.Add(new MockRequest())));
             }
             Task.WaitAll(tasks.ToArray());
-            Assert.AreEqual(1000, container.Length);
-            Debug.WriteLine($"Length after multithreaded filling: {container.Length}");
+            Assert.AreEqual(1000, container.Count);
+            Debug.WriteLine($"Count after multithreaded filling: {container.Count}");
         }
 
         [TestMethod]
@@ -269,7 +269,7 @@ namespace UnitTest
         {
             // Arrange
             var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(10000, token); return true; });
+            var longRequest = new OwnRequest(async (token) => { await Task.Delay(3500, token); return true; });
             var request = new OwnRequest(async (token) => { await Task.Delay(5000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
 
@@ -289,7 +289,7 @@ namespace UnitTest
         {
             // Arrange
             var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(10000, token); return true; });
+            var longRequest = new OwnRequest(async (token) => { await Task.Delay(1500, token); return true; });
             var request = new OwnRequest(async (token) => { await Task.Delay(5000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
 
@@ -308,7 +308,7 @@ namespace UnitTest
         {
             // Arrange
             var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(10000, token); return true; });
+            var longRequest = new OwnRequest(async (token) => { await Task.Delay(2000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
             container.Add(new OwnRequest(async (token) => { await Task.Delay(1000, token); return true; }));
 

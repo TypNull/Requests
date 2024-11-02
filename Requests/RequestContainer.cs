@@ -7,7 +7,7 @@ namespace Requests
     /// A class that combines multiple <see cref="IRequest"/> instances.
     /// </summary>
     /// <typeparam name="TRequest">A class that implements <see cref="IRequest"/></typeparam>
-    public class RequestContainer<TRequest> : IEnumerable<TRequest>, IRequest where TRequest : IRequest
+    public class RequestContainer<TRequest> : IRequestContainer<TRequest> where TRequest : IRequest
     {
         private volatile TRequest[] _requests = Array.Empty<TRequest>();
         private int _count;
@@ -53,7 +53,7 @@ namespace Requests
         /// <summary>
         /// Gets the count of <see cref="IRequest"/> instances contained in the <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
-        public int Length => _count; // Updated to use the new _count field
+        public int Count => _count;
 
         /// <summary>
         /// The synchronization context captured when this object was created. This will never be null.
@@ -256,7 +256,8 @@ namespace Requests
                 return;
             _isrunning = true;
             foreach (TRequest request in GetStored())
-                _ = request.TrySetIdle();
+                if (request.State != RequestState.Running)
+                    _ = request.TrySetIdle();
             foreach (TRequest request in GetStored().Where(x => x.State == RequestState.Idle))
                 await request.StartRequestAsync();
 

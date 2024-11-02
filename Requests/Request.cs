@@ -84,11 +84,13 @@ namespace Requests
         public virtual AggregateException? Exception { private set; get; }
 
         /// <summary>
-        /// Delays the start of the <see cref="Request{TOptions, TCompleated, TFailed}"/> on every Start call for the specified number of milliseconds.
+        /// Delays the start of the <see cref="Request{TOptions, TCompleated, TFailed}"/> on every Start call for the specified number of milliseconds. <br/>
+        /// This property can not be set while initialization.
         /// </summary>
         public TimeSpan? DeployDelay
         {
-            get => Options.DeployDelay; set => Options.DeployDelay = value;
+            get => Options.DeployDelay;
+            set => Options.DeployDelay = value;
         }
 
         /// <summary>
