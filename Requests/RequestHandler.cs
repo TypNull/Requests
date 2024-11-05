@@ -1,5 +1,6 @@
 ﻿using Requests.Channel;
 using Requests.Options;
+using System.Text;
 
 namespace Requests
 {
@@ -45,8 +46,8 @@ namespace Requests
         /// <summary>
         /// Represents the combined task of the requests.
         /// </summary>
-        public Task Task => _task.Task;
-        private readonly TaskCompletionSource _task = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Task => _task ?? Task.CompletedTask;
+        private Task? _task;
 
         /// <summary>
         /// Gets the aggregate exception associated with the <see cref="RequestHandler"/> instance.
@@ -103,6 +104,24 @@ namespace Requests
         public int Count => _requestsChannel.Count;
 
         /// <summary>
+        /// Initializes a new instance of the <see cref="RequestHandler"/> class with a priority channel.
+        /// If the priority count is zero, an exception is thrown; otherwise, a fixed-size priority channel is created.
+        /// If the priority count is null, a dynamic-size priority channel is created.
+        /// </summary>
+        /// <param name="priorityCount">The number of priority levels for the fixed-size priority channel. If zero, an exception is thrown. If null, a dynamic-size priority channel is used.</param>
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if the priority count is negative or zero.</exception>
+        public RequestHandler(int priorityCount = 3)
+        {
+            if (priorityCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(priorityCount), "Priority count cannot be negative.");
+
+            _requestsChannel = priorityCount > 0 ?
+                 new FixedPriorityChannel<IRequest>(priorityCount)
+                : new DynamicPriorityChannel<IRequest>();
+        }
+
+
+        /// <summary>
         /// Constructor for the <see cref="RequestHandler"/> class.
         /// </summary>
         /// <param name="requests">Instances of the <see cref="IRequest"/> interface that should be added.</param>
@@ -111,20 +130,6 @@ namespace Requests
             AddRange(requests);
             _requestsChannel.Options.EasyEndToken = _pts.Token;
             _requestsChannel.Options.MaxDegreeOfParallelism = Math.Min(AutoParallelism.Invoke(), MaxParallelism);
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="RequestHandler"/> class with a priority channel.
-        /// If the priority count is zero, a dynamic-size priority channel is created; otherwise, a fixed-size priority channel is created.
-        /// </summary>
-        /// <param name="priorityCount">The number of priority levels for the fixed-size priority channel. If zero, a dynamic-size priority channel is used.</param>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown if the priority count is negative.</exception>
-        public RequestHandler(int priorityCount = 3)
-        {
-            if (priorityCount < 0)
-                throw new ArgumentOutOfRangeException(nameof(priorityCount), "Priority count cannot be negative.");
-
-            _requestsChannel = priorityCount == 0 ? new DynamicPriorityChannel<IRequest>() : new FixedPriorityChannel<IRequest>(priorityCount);
         }
 
         /// <summary>
@@ -211,7 +216,11 @@ namespace Requests
         /// <summary>
         /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in this RequestHandler.
         /// </summary>
-        public void Cancel() => _cts.Cancel();
+        public void Cancel()
+        {
+            _cts.Cancel();
+            State = RequestState.Cancelled;
+        }
 
         /// <summary>
         /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in the Main RequestHandlers.
@@ -228,16 +237,15 @@ namespace Requests
         /// </summary>
         public static void ReusmeMain() => Array.ForEach(MainRequestHandlers, handler => handler.Start());
 
-
         /// <summary>
         /// This method is responsible for executing the instances of the  <see cref="IRequest"/> if the handler is not currently running.
         /// It updates the degree of parallelism based on the current system environment and runs the request channel.
         /// </summary>
         public void RunRequests()
         {
-            if (State == RequestState.Running || CancellationToken.IsCancellationRequested || _pts.IsPaused)
+            if (State != RequestState.Idle)
                 return;
-            Task.Run(async () => await RunChannel());
+            Task.Run(async () => await ((IRequest)this).StartRequestAsync());
         }
 
         /// <summary>
@@ -246,9 +254,10 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (State == RequestState.Running || CancellationToken.IsCancellationRequested || _pts.IsPaused)
+            if (State != RequestState.Idle || CancellationToken.IsCancellationRequested || _pts.IsPaused)
                 return;
-            await RunChannel();
+            _task = RunChannel();
+            await Task;
         }
 
         /// <summary>
@@ -261,8 +270,8 @@ namespace Requests
             UpdateAutoParallelism();
             await _requestsChannel.RunParallelReader(async (pair, ct) => await HandleRequests(pair));
             State = RequestState.Idle;
-            if (_requestsChannel.Reader.Count != 0)
-                RunRequests();
+            if (_requestsChannel.Reader.Count > 0)
+                await ((IRequest)this).StartRequestAsync();
         }
 
         /// <summary>
@@ -299,7 +308,6 @@ namespace Requests
         /// <summary>
         /// Attempts to set all <see cref="IRequest"/> objects in the container's <see cref="State"/> to idle.
         /// No new requests will be started or read while processing. And the running requests will be paused.
-        /// After finishing, the request handler will still be paused.
         /// </summary>
         /// <returns>True if all <see cref="IRequest"/> objects are in an idle <see cref="RequestState"/>, otherwise false.</returns>
         public bool TrySetIdle()
@@ -319,13 +327,36 @@ namespace Requests
             if (_disposed)
                 return;
 
-            _task.SetResult();
             Cancel();
             _cts.Dispose();
             _disposed = true;
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>
+        /// Provides a detailed string representation of the current state of the <see cref="RequestHandler"/> instance.
+        /// </summary>
+        /// <returns>A string that represents the current state of the <see cref="RequestHandler"/>.</returns>
+        public override string ToString()
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("RequestHandler State:");
+            sb.AppendLine($"  Disposed: {_disposed}");
+            sb.AppendLine($"  Cancellation Requested: {_cts.IsCancellationRequested}");
+            sb.AppendLine($"  Paused: {_pts.IsPaused}");
+            sb.AppendLine($"  State: {State}");
+            sb.AppendLine($"  Priority: {Priority}");
+            sb.AppendLine($"  Task Status: {Task.Status}");
+            sb.AppendLine($"  Exception: {Exception?.Message ?? "None"}");
+            sb.AppendLine($"  Static Degree of Parallelism: {StaticDegreeOfParallelism?.ToString() ?? "Auto"}");
+            sb.AppendLine($"  Max Parallelism: {MaxParallelism}");
+            sb.AppendLine($"  Request Count: {Count}");
+            sb.AppendLine($"  CancellationToken: {CancellationToken.IsCancellationRequested}");
+            sb.AppendLine($"  PauseToken: {_pts.IsPaused}");
+
+            return sb.ToString();
+        }
         /// <summary>
         /// Attempts to remove the specified requests from the priority channel.
         /// </summary>

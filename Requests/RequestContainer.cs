@@ -274,10 +274,17 @@ namespace Requests
 
             while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
                 Thread.Yield();
-            _requests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+
+            var storedRequests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+
+            int newSize = storedRequests.Length + 32;
+
+            Array.Resize(ref storedRequests, newSize);
+
+            _requests = storedRequests;
             _count = _requests.Length;
 
-            Interlocked.Exchange(ref _writeInProgress, 0); // Release the write lock
+            Interlocked.Exchange(ref _writeInProgress, 0);
 
             if (_count > 0 && !Task.IsCompleted)
                 NewTaskCompletion();

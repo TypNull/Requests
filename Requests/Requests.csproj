@@ -8,7 +8,7 @@
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
     <Authors>Meyn</Authors>
     <Company>Shard</Company>
-    <Description>Requests is your go-to C# .NET 6 library for handling requests in a parallel async state. It’s like having a reliable co-pilot for your code. With features like priority settings, retry functions, and expandable classes, it’s the perfect companion for HTTP requests and other CPU-intensive tasks. Features include retry functions, priority settings, and notification delegates.</Description>
+    <Description>A C# .NET 6 library for parallel async request handling. Features include priority settings, retry functions, and expandable classes, making it ideal for HTTP requests and CPU-intensive tasks.</Description>
     <Copyright>Shard © 2024</Copyright>
     <PackageProjectUrl></PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -16,13 +16,14 @@
     <PackageTags>async; channel; priority; request; parallel; </PackageTags>
     <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
     <PackageIcon>logo.png</PackageIcon>
-    <Version>2.1.5</Version>
+    <Version>2.1.6</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Fix CTS cancellation issue
-Enhance RequestContainer concurrency
-Expand unit test coverage</PackageReleaseNotes>
+    <PackageReleaseNotes>Introduced DynamicPriorityChannel to manage dynamic priority handling.
+Implemented RequestContainer interface into RequestHandler to add request logic.
+Changed RequestPriority to a floating type for enhanced flexibility.
+RequestHandler minor improvements</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
