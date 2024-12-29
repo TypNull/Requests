@@ -104,6 +104,20 @@ namespace Requests
         public int Count => _requestsChannel.Count;
 
         /// <summary>
+        /// Represents a task that completes when all the requests currently present in the handler have finished processing.
+        /// This task does not account for any requests that may be added to the handler after its creation.
+        /// </summary>
+        /// <remarks>
+        /// <strong>Warning:</strong> This operation may block the handler for a period of time.
+        /// </remarks>
+        public Task CurrentTask => Task.WhenAll(_requestsChannel.ToArray().Select(requestPair => requestPair.Item.Task));
+
+        /// <summary>
+        /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
+        /// </summary>
+        IRequest? IRequest.SubsequentRequest => null;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="RequestHandler"/> class with a priority channel.
         /// If the priority count is zero, an exception is thrown; otherwise, a fixed-size priority channel is created.
         /// If the priority count is null, a dynamic-size priority channel is created.
@@ -285,9 +299,36 @@ namespace Requests
             await request.StartRequestAsync();
 
             if (request.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
+            {
                 request.Dispose();
+
+                if (request.SubsequentRequest != null)
+                    await SubsequentRequest(request);
+            }
             else if (request.State == RequestState.Idle)
                 await _requestsChannel.Writer.WriteAsync(pair);
+        }
+
+        /// <summary>
+        /// Processes the subsequent request of the given request. Starts it if the current request completes,
+        /// or disposes it and processes the chain if the current request fails or is canceled.
+        /// </summary>
+        /// <param name="request">The request to process.</param>
+        /// <returns>A task representing the operation.</returns>
+        private async Task SubsequentRequest(IRequest request)
+        {
+            IRequest subRequest = request.SubsequentRequest!;
+            if (request.State == RequestState.Compleated)
+            {
+                if (subRequest.State != RequestState.Running && subRequest.TrySetIdle())
+                    await HandleRequests(new PriorityItem<IRequest>(subRequest.Priority, subRequest));
+            }
+            else
+            {
+                subRequest.Dispose();
+                if (subRequest.SubsequentRequest != null)
+                    await SubsequentRequest(subRequest.SubsequentRequest);
+            }
         }
 
         /// <summary>
@@ -313,7 +354,7 @@ namespace Requests
         public bool TrySetIdle()
         {
             Pause();
-            var requests = _requestsChannel.ToArray();
+            PriorityItem<IRequest>[] requests = _requestsChannel.ToArray();
             foreach (PriorityItem<IRequest> priorityItem in requests)
                 _ = priorityItem.Item.TrySetIdle();
             return requests.All(x => x.Item.State == RequestState.Idle);
@@ -339,7 +380,7 @@ namespace Requests
         /// <returns>A string that represents the current state of the <see cref="RequestHandler"/>.</returns>
         public override string ToString()
         {
-            var sb = new StringBuilder();
+            StringBuilder sb = new();
 
             sb.AppendLine("RequestHandler State:");
             sb.AppendLine($"  Disposed: {_disposed}");
@@ -369,21 +410,25 @@ namespace Requests
             if (requests == null || requests.Length == 0)
                 throw new ArgumentNullException(nameof(requests), "Requests cannot be null or empty.");
 
-            foreach (var request in requests)
+            foreach (IRequest request in requests)
                 if (!_requestsChannel.TryRemove(new(request.Priority, request)))
                     throw new InvalidOperationException($"Failed to remove request: {request}");
         }
 
         /// <summary>
-        /// Returns an enumerator that iterates through the collection of requests. 
-        /// Blocks the Handler for a amout of time.
+        /// Returns an enumerator that iterates through the collection of requests.
+        /// <remarks>
+        /// <strong>Warning:</strong> This operation may block the handler for a period of time.
+        /// </remarks>
         /// </summary>
-        /// <returns>An enumerator that can be used to iterate through the collection.</returns>
+        /// <returns>An enumerator that can be used to iterate through the collection of requests.</returns>
         public IEnumerator<IRequest> GetEnumerator() => _requestsChannel.ToArray().Select(pair => pair.Item).GetEnumerator();
 
         /// <summary>
-        /// Returns an enumerator that iterates through a collection.
-        /// Blocks the Handler for a amout of time.
+        /// Returns an enumerator that iterates through the collection of requests.
+        /// <remarks>
+        /// <strong>Warning:</strong> This operation may block the handler for a period of time.
+        /// </remarks>
         /// </summary>
         /// <returns>An <see cref="System.Collections.IEnumerator"/> object that can be used to iterate through the collection.</returns>
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();

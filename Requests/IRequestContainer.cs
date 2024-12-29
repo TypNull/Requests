@@ -15,6 +15,12 @@ namespace Requests
         int Count { get; }
 
         /// <summary>
+        /// Represents a task that completes when all the requests currently available in the container have completed.
+        /// This task does not include requests that may be added to the container in the future.
+        /// </summary>
+        Task CurrentTask { get; }
+
+        /// <summary>
         /// Incorporates a <see cref="IRequest"/> into the <see cref="IRequestContainer{TRequest}"/>.
         /// </summary>
         /// <param name="request">The <see cref="IRequest"/> to be incorporated.</param>

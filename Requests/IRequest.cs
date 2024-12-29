@@ -23,6 +23,16 @@ namespace Requests
         public abstract RequestPriority Priority { get; }
 
         /// <summary>
+        /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
+        /// </summary>
+        /// <remarks>
+        /// The subsequent request supports auto-starting if enabled, but this behavior can be disabled if not desired.
+        /// <br/>If the subsequent request is already running, it will not be started again.
+        /// <br/>If this request fails, the subsequent request will be canceled and disposed.
+        /// </remarks>
+        public abstract IRequest? SubsequentRequest { get; }
+
+        /// <summary>
         /// Gets the <see cref="System.Threading.Tasks.Task"/> representing the completion status of this <see cref="IRequest"/>.
         /// </summary>
         public abstract Task Task { get; }
@@ -35,7 +45,7 @@ namespace Requests
         /// <summary>
         /// Starts the execution of the <see cref="IRequest"/> created from this object.
         /// </summary>
-        protected internal Task StartRequestAsync();
+        public Task StartRequestAsync();
 
         /// <summary>
         /// Cancels the execution of the <see cref="IRequest"/>.

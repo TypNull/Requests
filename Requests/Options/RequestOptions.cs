@@ -18,13 +18,18 @@
 
         ///<inheritdoc />
         public TimeSpan? DeployDelay { get; set; } = null;
+
         ///<inheritdoc />
         public RequestHandler Handler { get; set; } = RequestHandler.MainRequestHandlers[0];
+
         ///<inheritdoc />
         public byte NumberOfAttempts { get; set; } = 3;
 
         ///<inheritdoc />
         public TimeSpan? DelayBetweenAttemps { get; set; } = null;
+
+        ///<inheritdoc />
+        public IRequest? SubsequentRequest { get; set; }
 
         ///<inheritdoc />
         public Notify<IRequest>? RequestStarted { get; set; }
@@ -51,6 +56,7 @@
             AutoStart = options.AutoStart;
             DelayBetweenAttemps = options.DelayBetweenAttemps;
             DeployDelay = options.DeployDelay;
+            SubsequentRequest = options.SubsequentRequest;
             RequestCancelled += options.RequestCancelled;
             RequestStarted += options.RequestStarted;
             RequestFailed += options.RequestFailed;

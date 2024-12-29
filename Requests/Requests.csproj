@@ -16,14 +16,12 @@
     <PackageTags>async; channel; priority; request; parallel; </PackageTags>
     <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
     <PackageIcon>logo.png</PackageIcon>
-    <Version>2.1.6</Version>
+    <Version>2.2.0</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Introduced DynamicPriorityChannel to manage dynamic priority handling.
-Implemented RequestContainer interface into RequestHandler to add request logic.
-Changed RequestPriority to a floating type for enhanced flexibility.
-RequestHandler minor improvements</PackageReleaseNotes>
+    <PackageReleaseNotes>Implement SubsequentRequest
+Fix RequestContainer GetRequests issue</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

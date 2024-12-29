@@ -43,6 +43,16 @@
         public CancellationToken? CancellationToken { get; set; }
 
         /// <summary>
+        /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
+        /// </summary>
+        /// <remarks>
+        /// The subsequent request supports auto-starting if enabled, but this behavior can be disabled if not desired.
+        /// <br/>If the subsequent request is already running, it will not be started again.
+        /// <br/>If the holding request fails, the subsequent request will be canceled and disposed.
+        /// </remarks>
+        public IRequest? SubsequentRequest { get; set; }
+
+        /// <summary>
         /// An event that will be triggered when the <see cref="IRequest"/> is cancelled.
         /// </summary>
         public Notify<IRequest>? RequestCancelled { get; set; }

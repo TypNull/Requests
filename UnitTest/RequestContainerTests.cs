@@ -24,6 +24,8 @@ namespace UnitTest
             public RequestPriority Priority => RequestPriority.Normal;
             public AggregateException? Exception => null;
 
+            public IRequest? SubsequentRequest => null;
+
             public void Cancel() => State = RequestState.Cancelled;
             public void Dispose() => State = RequestState.Cancelled;
             public void Pause() => State = RequestState.Paused;
@@ -41,7 +43,8 @@ namespace UnitTest
         [TestMethod]
         public void TestAddAndLength()
         {
-            var container = new RequestContainer<MockRequest> { new() };
+            RequestContainer<MockRequest> container = new()
+            { new() };
             Assert.AreEqual(1, container.Count);
             Debug.WriteLine($"Count after adding one request: {container.Count}");
         }
@@ -49,7 +52,7 @@ namespace UnitTest
         [TestMethod]
         public void TestAddRangeAndLength()
         {
-            var container = new RequestContainer<MockRequest>();
+            RequestContainer<MockRequest> container = new();
             container.AddRange(new MockRequest(), new MockRequest());
             Assert.AreEqual(2, container.Count);
             Debug.WriteLine($"Count after adding two requests: {container.Count}");
@@ -58,9 +61,9 @@ namespace UnitTest
         [TestMethod]
         public void TestGetEnumerator()
         {
-            var container = new RequestContainer<MockRequest>();
+            RequestContainer<MockRequest> container = new();
             container.AddRange(new MockRequest(), new MockRequest());
-            var enumerator = container.GetEnumerator();
+            IEnumerator<MockRequest> enumerator = container.GetEnumerator();
             int count = 0;
             while (enumerator.MoveNext())
                 count++;
@@ -71,9 +74,9 @@ namespace UnitTest
         [TestMethod]
         public void TestSetIdleWhileFilling()
         {
-            var container = new RequestContainer<MockRequest>();
-            var request1 = new MockRequest();
-            var request2 = new MockRequest();
+            RequestContainer<MockRequest> container = new();
+            MockRequest request1 = new();
+            MockRequest request2 = new();
             container.Add(request1);
             container.Add(request2);
             request1.Start();
@@ -86,9 +89,9 @@ namespace UnitTest
         [TestMethod]
         public void TestPauseAndStart()
         {
-            var container = new RequestContainer<MockRequest>();
-            var request1 = new MockRequest();
-            var request2 = new MockRequest();
+            RequestContainer<MockRequest> container = new();
+            MockRequest request1 = new();
+            MockRequest request2 = new();
             container.Add(request1);
             container.Add(request2);
             request1.Start();
@@ -105,9 +108,9 @@ namespace UnitTest
         [TestMethod]
         public void TestOnStateChanged()
         {
-            var container = new RequestContainer<MockRequest>();
-            var request1 = new MockRequest();
-            var request2 = new MockRequest();
+            RequestContainer<MockRequest> container = new();
+            MockRequest request1 = new();
+            MockRequest request2 = new();
             container.Add(request1);
             container.Add(request2);
             request1.Start();
@@ -124,9 +127,9 @@ namespace UnitTest
         [TestMethod]
         public void TestCalculateState()
         {
-            var container = new RequestContainer<MockRequest>();
-            var request1 = new MockRequest();
-            var request2 = new MockRequest();
+            RequestContainer<MockRequest> container = new();
+            MockRequest request1 = new();
+            MockRequest request2 = new();
             container.Add(request1);
             container.Add(request2);
             request1.Start();
@@ -138,11 +141,11 @@ namespace UnitTest
         [TestMethod]
         public void TestMergeContainers()
         {
-            var container1 = new RequestContainer<MockRequest>();
-            var container2 = new RequestContainer<MockRequest>();
+            RequestContainer<MockRequest> container1 = new();
+            RequestContainer<MockRequest> container2 = new();
             container1.Add(new MockRequest());
             container2.Add(new MockRequest());
-            var mergedContainer = RequestContainer<MockRequest>.MergeContainers(container1, container2);
+            RequestContainer<MockRequest> mergedContainer = RequestContainer<MockRequest>.MergeContainers(container1, container2);
             Assert.AreEqual(2, mergedContainer.Count);
             Debug.WriteLine($"Count of merged container: {mergedContainer.Count}");
         }
@@ -150,9 +153,9 @@ namespace UnitTest
         [TestMethod]
         public void TestAccessItems()
         {
-            var container = new RequestContainer<MockRequest>();
-            var request1 = new MockRequest();
-            var request2 = new MockRequest();
+            RequestContainer<MockRequest> container = new();
+            MockRequest request1 = new();
+            MockRequest request2 = new();
             container.Add(request1);
             container.Add(request2);
             Assert.AreEqual(request1, container[0]);
@@ -164,18 +167,18 @@ namespace UnitTest
         [TestMethod]
         public void TestMultithreadedReadingAndWriting()
         {
-            var container = new RequestContainer<MockRequest>();
+            RequestContainer<MockRequest> container = new();
             for (int i = 0; i < 1000; i++)
             {
                 container.Add(new MockRequest());
             }
 
-            var tasks = new List<Task>();
+            List<Task> tasks = new();
             for (int i = 0; i < 1000; i++)
             {
                 tasks.Add(Task.Run(() =>
                 {
-                    var request = container[i % container.Count];
+                    MockRequest request = container[i % container.Count];
                     Assert.IsNotNull(request);
                 }));
 
@@ -193,8 +196,8 @@ namespace UnitTest
         [TestMethod]
         public void TestMultithreadedAddingAndRemoving()
         {
-            var container = new RequestContainer<MockRequest>();
-            var tasks = new List<Task>();
+            RequestContainer<MockRequest> container = new();
+            List<Task> tasks = new();
 
             for (int i = 0; i < 1000; i++)
             {
@@ -215,18 +218,18 @@ namespace UnitTest
         [TestMethod]
         public void TestMultithreadedMixedOperations()
         {
-            var container = new RequestContainer<MockRequest>();
+            RequestContainer<MockRequest> container = new();
             for (int i = 0; i < 1000; i++)
             {
                 container.Add(new MockRequest());
             }
 
-            var tasks = new List<Task>();
+            List<Task> tasks = new();
             for (int i = 0; i < 1000; i++)
             {
                 tasks.Add(Task.Run(() =>
                 {
-                    var request = container[i % container.Count];
+                    MockRequest request = container[i % container.Count];
                     Assert.IsNotNull(request);
                 }));
 
@@ -253,8 +256,8 @@ namespace UnitTest
         [TestMethod]
         public void TestMultithreadedFilling()
         {
-            var container = new RequestContainer<MockRequest>();
-            var tasks = new List<Task>();
+            RequestContainer<MockRequest> container = new();
+            List<Task> tasks = new();
             for (int i = 0; i < 1000; i++)
             {
                 tasks.Add(Task.Run(() => container.Add(new MockRequest())));
@@ -268,9 +271,9 @@ namespace UnitTest
         public async Task TestContainerTaskRemove()
         {
             // Arrange
-            var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(3500, token); return true; });
-            var request = new OwnRequest(async (token) => { await Task.Delay(5000, token); return true; });
+            RequestContainer<OwnRequest> container = new();
+            OwnRequest longRequest = new(async (token) => { await Task.Delay(3500, token); return true; });
+            OwnRequest request = new(async (token) => { await Task.Delay(5000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
 
             // Act
@@ -288,9 +291,9 @@ namespace UnitTest
         public async Task TestContainerTask()
         {
             // Arrange
-            var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(1500, token); return true; });
-            var request = new OwnRequest(async (token) => { await Task.Delay(5000, token); return true; });
+            RequestContainer<OwnRequest> container = new();
+            OwnRequest longRequest = new(async (token) => { await Task.Delay(1500, token); return true; });
+            OwnRequest request = new(async (token) => { await Task.Delay(5000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
 
             // Act
@@ -307,8 +310,8 @@ namespace UnitTest
         public async Task TestContainerTaskFinished()
         {
             // Arrange
-            var container = new RequestContainer<OwnRequest>();
-            var longRequest = new OwnRequest(async (token) => { await Task.Delay(2000, token); return true; });
+            RequestContainer<OwnRequest> container = new();
+            OwnRequest longRequest = new(async (token) => { await Task.Delay(2000, token); return true; });
             container.Add(new OwnRequest(async (token) => { await Task.Delay(3000, token); return true; }));
             container.Add(new OwnRequest(async (token) => { await Task.Delay(1000, token); return true; }));
 

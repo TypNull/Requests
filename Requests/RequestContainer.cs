@@ -66,6 +66,15 @@ namespace Requests
         public AggregateException? Exception => new(GetStored().Where(x => x?.Exception != null).Select(x => x!.Exception!));
 
         /// <summary>
+        /// Represents a task that completes when all the requests currently available in the container have completed.
+        /// This task does not include requests that may be added to the container in the future.
+        /// </summary>
+        public Task CurrentTask => Task.WhenAll(GetStored().Select(request => request.Task));
+
+        /// <inheritdoc/>
+        IRequest? IRequest.SubsequentRequest => null;
+
+        /// <summary>
         /// Constructor that merges <see cref="IRequest"/> instances together.
         /// </summary>
         /// <param name="requests">The <see cref="IRequest"/> instances to merge.</param>
@@ -275,14 +284,15 @@ namespace Requests
             while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
                 Thread.Yield();
 
-            var storedRequests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+            TRequest[] storedRequests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
 
-            int newSize = storedRequests.Length + 32;
+            int size = storedRequests.Length;
+            int newSize = size + 32;
 
             Array.Resize(ref storedRequests, newSize);
 
             _requests = storedRequests;
-            _count = _requests.Length;
+            _count = size;
 
             Interlocked.Exchange(ref _writeInProgress, 0);
 
@@ -300,7 +310,7 @@ namespace Requests
         public void Cancel()
         {
             _isCanceled = true;
-            foreach (var request in GetStored())
+            foreach (TRequest request in GetStored())
                 request.Cancel();
 
         }

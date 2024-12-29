@@ -117,6 +117,9 @@ namespace Requests
         /// </summary>
         public virtual RequestPriority Priority => Options.Priority;
 
+        /// <inheritdoc/>
+        IRequest? IRequest.SubsequentRequest => Options.SubsequentRequest;
+
         /// <summary>
         /// Constructor for the <see cref="Request{TOptions, TCompleted, TFailed}"/> class.
         /// </summary>
@@ -166,6 +169,7 @@ namespace Requests
             if (!_disposed)
                 _cts.Cancel();
             _isFinished.TrySetCanceled();
+            Options.SubsequentRequest?.Cancel();
         }
 
         /// <summary>
