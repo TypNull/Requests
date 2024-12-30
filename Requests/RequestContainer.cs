@@ -378,5 +378,11 @@ namespace Requests
         /// </summary>
         /// <returns>An enumerable of non-null requests.</returns>
         private IEnumerable<TRequest> GetStored() => _requests[.._count].Where(req => req != null)!;
+
+        /// <summary>
+        /// Since the container's state depends on the items it holds, it cannot complete.
+        /// </summary>
+        /// <returns>Always returns <c>false</c></returns>
+        public bool HasCompleted() => false;
     }
 }

@@ -58,13 +58,20 @@ namespace Requests
         public abstract void Start();
 
         /// <summary>
-        /// Puts the <see cref="IRequest"/> on hold.
+        /// Puts the <see cref="IRequest"/> on hold, allowing it to be resumed later.
         /// </summary>
         public abstract void Pause();
 
         /// <summary>
-        /// Tries to set the <see cref="IRequest"/> <see cref="State"/> to idle.
+        /// Attempts to set the <see cref="IRequest"/> <see cref="State"/> to idle.
         /// </summary>
+        /// <returns><c>true</c> if the state was successfully set to idle; otherwise, <c>false</c>.</returns>
         public abstract bool TrySetIdle();
+
+        /// <summary>
+        /// Checks whether the <see cref="IRequest"/> has reached a final state and will no longer change.
+        /// </summary>
+        /// <returns><c>true</c> if the request is in a final state; otherwise, <c>false</c>.</returns>
+        public abstract bool HasCompleted();
     }
 }

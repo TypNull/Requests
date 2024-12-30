@@ -301,7 +301,6 @@ namespace Requests
             if (request.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
             {
                 request.Dispose();
-
                 if (request.SubsequentRequest != null)
                     await SubsequentRequest(request);
             }
@@ -361,6 +360,12 @@ namespace Requests
         }
 
         /// <summary>
+        /// Checks whether the <see cref="RequestHandler"/> has reached a final state and will process <see cref="IRequest"/> objects.
+        /// </summary>
+        /// <returns><c>true</c> if the hanlder is in a final state; otherwise, <c>false</c>.</returns>
+        public bool HasCompleted() => _requestsChannel.Reader.Completion.IsCompleted;
+
+        /// <summary>
         /// Disposes the <see cref="RequestHandler"/> instance and canceling all ongoing tasks.
         /// </summary>
         public void Dispose()
@@ -398,6 +403,7 @@ namespace Requests
 
             return sb.ToString();
         }
+
         /// <summary>
         /// Attempts to remove the specified requests from the priority channel.
         /// </summary>

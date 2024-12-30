@@ -100,7 +100,7 @@ namespace Requests
         {
             get => _state; protected set
             {
-                if (_state is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
+                if (HasCompleted())
                     return;
                 _state = value;
                 SynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
@@ -356,6 +356,25 @@ namespace Requests
             State = RequestState.Idle;
             return State == RequestState.Idle;
         }
+
+        /// <summary>
+        /// Sets a subsequent <see cref="IRequest"/> if neither the current nor the provided request has completed.
+        /// </summary>
+        /// <param name="request">The subsequent request to set.</param>
+        /// <returns><c>true</c> if the request was set; otherwise, <c>false</c>.</returns>
+        public bool TrySetSubsequentRequest(IRequest request)
+        {
+            if (HasCompleted() || request.HasCompleted())
+                return false;
+            Options.SubsequentRequest = request;
+            return true;
+        }
+
+        /// <summary>
+        /// Checks whether the <see cref="IRequest"/> has reached a final state (e.g., completed, failed, or cancelled) and will no longer change.
+        /// </summary>
+        /// <returns><c>true</c> if the request is in a final state; otherwise, <c>false</c>.</returns>
+        public bool HasCompleted() => State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled;
 
         /// <summary>
         /// A class that encapsulates the return objects and notifications for <see cref="Request{TOptions, TCompleated, TFailed}"/>.
