@@ -16,7 +16,7 @@
         /// <summary>
         /// State indicating that the <see cref="IRequest"/> has been completed successfully.
         /// </summary>
-        Compleated,
+        Completed,
         /// <summary>
         /// State indicating that the <see cref="IRequest"/> is currently paused.
         /// </summary>

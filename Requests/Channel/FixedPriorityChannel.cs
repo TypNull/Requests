@@ -56,7 +56,7 @@ namespace Requests.Channel
         /// Initialize the priority channel.
         /// </summary>
         /// <param name="priCount">How many prioritys the channel sould handle</param>
-        internal FixedPriorityChannel(int priCount)
+        public FixedPriorityChannel(int priCount)
         {
             _priorityCount = priCount;
             _queues = new ConcurrentQueue<PriorityItem<TElement>>[_priorityCount];
@@ -80,12 +80,12 @@ namespace Requests.Channel
             _ = body ?? throw new ArgumentNullException(nameof(body));
 
             SemaphoreSlim throttler = new(Options.MaxDegreeOfParallelism);
-            Options.DegreeOfParallelismChangedDelta += (sender, delta) => OnParallismChanged(delta, throttler);
+            Options.DegreeOfParallelismChangedDelta += (sender, delta) => OnParallelismChanged(delta, throttler);
 
-            return ParrarelRun(body, throttler);
+            return ParallelRun(body, throttler);
         }
 
-        private Task ParrarelRun(Func<PriorityItem<TElement>, CancellationToken, ValueTask> body, SemaphoreSlim throttler)
+        private Task ParallelRun(Func<PriorityItem<TElement>, CancellationToken, ValueTask> body, SemaphoreSlim throttler)
         {
             return Parallel.ForEachAsync(GetThrottledSource(throttler), Options, async (item, ct) =>
             {
@@ -93,13 +93,13 @@ namespace Requests.Channel
                 finally { throttler.Release(); }
             }).ContinueWith(task =>
             {
-                Options.DegreeOfParallelismChangedDelta -= (object? sender, int delta) => OnParallismChanged(delta, throttler);
+                Options.DegreeOfParallelismChangedDelta -= (object? sender, int delta) => OnParallelismChanged(delta, throttler);
                 return task;
             }, default, TaskContinuationOptions.DenyChildAttach, TaskScheduler.Default)
                 .Unwrap();
         }
 
-        private static void OnParallismChanged(int delta, SemaphoreSlim throttler)
+        private static void OnParallelismChanged(int delta, SemaphoreSlim throttler)
         {
             if (delta > 0)
                 throttler.Release(delta);
@@ -110,14 +110,14 @@ namespace Requests.Channel
 
         private async IAsyncEnumerable<PriorityItem<TElement>> GetThrottledSource(SemaphoreSlim throttler)
         {
-            await foreach (PriorityItem<TElement> element in Reader.ReadAllAsync().WithCancellation(default).ConfigureAwait(false))
+            await foreach (PriorityItem<TElement> element in Reader.ReadAllAsync().WithCancellation(Options.CancellationToken).ConfigureAwait(false))
             {
-                if (Options?.EasyEndToken.IsPaused == true)
+                if (Options.EasyEndToken.IsPaused == true)
                 {
                     _ = Writer.WriteAsync(element).AsTask();
                     break;
                 }
-                await throttler.WaitAsync().ConfigureAwait(false);
+                await throttler.WaitAsync(Options.CancellationToken).ConfigureAwait(false);
                 yield return element;
             }
         }
@@ -295,12 +295,12 @@ namespace Requests.Channel
                     parent._doneWriting = error ?? ChannelUtilities.s_doneWritingSentinel;
                     completeTask = parent._queues.All(x => x.IsEmpty);
                 }
-                CompleatChannelUtils(error, parent, completeTask);
+                CompleteChannelUtils(error, parent, completeTask);
 
                 return true;
             }
 
-            private static void CompleatChannelUtils(Exception? error, FixedPriorityChannel<TElement> parent, bool completeTask)
+            private static void CompleteChannelUtils(Exception? error, FixedPriorityChannel<TElement> parent, bool completeTask)
             {
                 if (completeTask)
                     ChannelUtilities.Complete(parent._completion, error);
@@ -388,7 +388,17 @@ namespace Requests.Channel
                     if (parent._doneWriting != null)
                         return false;
 
-                    return parent._queues[(int)item.Priority].TryRemove(item);
+                    // Add bounds checking for priority
+                    int priorityIndex = (int)item.Priority;
+                    if (priorityIndex < 0 || priorityIndex >= parent._priorityCount)
+                        return false;
+
+                    bool removed = parent._queues[priorityIndex].TryRemove(item);
+                    if (removed)
+                    {
+                        Interlocked.Decrement(ref parent._count);
+                    }
+                    return removed;
                 }
             }
         }
@@ -399,18 +409,22 @@ namespace Requests.Channel
         /// <returns>A Array T</returns>
         public PriorityItem<TElement>[] ToArray()
         {
-            PriorityItem<TElement>[] result;
-
             lock (_queues)
             {
-                result = new PriorityItem<TElement>[Reader.Count];
+                int count = 0;
+                foreach (ConcurrentQueue<PriorityItem<TElement>> queue in _queues)
+                    foreach (PriorityItem<TElement> _ in queue)
+                        count++;
+
+                if (count == 0)
+                    return Array.Empty<PriorityItem<TElement>>();
+
+                PriorityItem<TElement>[] result = new PriorityItem<TElement>[count];
                 int index = 0;
-                foreach (ConcurrentQueue<PriorityItem<TElement>> q in _queues)
-                    if (q.Count > 0)
-                    {
-                        q.CopyTo(result, index);
-                        index += q.Count;
-                    }
+                foreach (ConcurrentQueue<PriorityItem<TElement>> queue in _queues)
+                    foreach (PriorityItem<TElement> item in queue)
+                        result[index++] = item;
+
                 return result;
             }
         }

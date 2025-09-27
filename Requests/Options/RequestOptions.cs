@@ -1,11 +1,11 @@
 ﻿namespace Requests.Options
 {
     /// <summary>
-    /// A record that implements the <see cref="IRequestOptions{TCompleated, TFailed}"/> interface.
+    /// A record that implements the <see cref="IRequestOptions{TCompleted, TFailed}"/> interface.
     /// </summary>
-    /// <typeparam name="TCompleated">The return type if the request is completed successfully.</typeparam>
+    /// <typeparam name="TCompleted">The return type if the request is completed successfully.</typeparam>
     /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
-    public record RequestOptions<TCompleated, TFailed> : IRequestOptions<TCompleated, TFailed>
+    public record RequestOptions<TCompleted, TFailed> : IRequestOptions<TCompleted, TFailed>
     {
         /// <inheritdoc />
         public bool AutoStart { get; set; } = true;
@@ -32,22 +32,25 @@
         public IRequest? SubsequentRequest { get; set; }
 
         ///<inheritdoc />
-        public Notify<IRequest>? RequestStarted { get; set; }
+        public Action<IRequest>? RequestStarted { get; set; }
 
         ///<inheritdoc />
-        public Notify<IRequest, TCompleated>? RequestCompleated { get; set; }
+        public Action<IRequest, TCompleted>? RequestCompleted { get; set; }
 
         ///<inheritdoc />
-        public Notify<IRequest, TFailed>? RequestFailed { get; set; }
+        public Action<IRequest, TFailed>? RequestFailed { get; set; }
 
         ///<inheritdoc />
-        public Notify<IRequest>? RequestCancelled { get; set; }
+        public Action<IRequest>? RequestCancelled { get; set; }
+
+        ///<inheritdoc />
+        public Action<IRequest, Exception>? RequestExceptionOccurred { get; set; }
 
         /// <summary>
         /// Copy constructor for the RequestOptions record.
         /// </summary>
         /// <param name="options">The RequestOptions instance to copy from.</param>
-        protected RequestOptions(RequestOptions<TCompleated, TFailed> options)
+        protected RequestOptions(RequestOptions<TCompleted, TFailed> options)
         {
             Priority = options.Priority;
             Handler = options.Handler;
@@ -60,7 +63,8 @@
             RequestCancelled += options.RequestCancelled;
             RequestStarted += options.RequestStarted;
             RequestFailed += options.RequestFailed;
-            RequestCompleated += options.RequestCompleated;
+            RequestCompleted += options.RequestCompleted;
+            RequestExceptionOccurred += options.RequestExceptionOccurred;
         }
 
         /// <summary>

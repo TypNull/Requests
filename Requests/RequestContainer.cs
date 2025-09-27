@@ -250,7 +250,7 @@ namespace Requests
             else if (counter[4] > 0)
                 state = RequestState.Waiting;
             else if (counter[2] == _count)
-                state = RequestState.Compleated;
+                state = RequestState.Completed;
             else if (counter[3] > 0)
                 state = RequestState.Paused;
             else
@@ -300,7 +300,7 @@ namespace Requests
                 NewTaskCompletion();
             else
                 _task = null;
-            if (State is not RequestState.Compleated and not RequestState.Paused)
+            if (State is not RequestState.Completed and not RequestState.Paused)
                 State = CalculateState();
         }
 

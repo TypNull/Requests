@@ -45,7 +45,7 @@ namespace Requests.Channel
         /// <summary>
         /// Initialize the priority channel without a specified number of priorities.
         /// </summary>
-        internal DynamicPriorityChannel()
+        public DynamicPriorityChannel()
         {
             _priorityQueue = new ConcurrentPriorityQueue<TElement>();
             Reader = new DynamicPriorityChannelReader(this);
@@ -94,14 +94,14 @@ namespace Requests.Channel
 
         private async IAsyncEnumerable<PriorityItem<TElement>> GetThrottledSource(SemaphoreSlim throttler)
         {
-            await foreach (PriorityItem<TElement> element in Reader.ReadAllAsync().WithCancellation(default).ConfigureAwait(false))
+            await foreach (PriorityItem<TElement> element in Reader.ReadAllAsync().WithCancellation(Options.CancellationToken).ConfigureAwait(false))
             {
-                if (Options?.EasyEndToken.IsPaused == true)
+                if (Options.EasyEndToken.IsPaused == true)
                 {
                     _ = Writer.WriteAsync(element).AsTask();
                     break;
                 }
-                await throttler.WaitAsync().ConfigureAwait(false);
+                await throttler.WaitAsync(Options.CancellationToken).ConfigureAwait(false);
                 yield return element;
             }
         }
@@ -359,7 +359,12 @@ namespace Requests.Channel
                     if (parent._doneWriting != null)
                         return false;
 
-                    return parent._priorityQueue.TryRemove(item);
+                    bool removed = parent._priorityQueue.TryRemove(item);
+                    if (removed)
+                    {
+                        Interlocked.Decrement(ref parent._count);
+                    }
+                    return removed;
                 }
             }
         }

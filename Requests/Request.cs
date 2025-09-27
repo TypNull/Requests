@@ -189,7 +189,7 @@ namespace Requests
         /// <exception cref="InvalidOperationException"></exception>
         public virtual void Dispose()
         {
-            if (State == RequestState.Running)
+            if (!HasCompleted())
                 Cancel();
             if (_disposed)
                 return;
@@ -237,7 +237,7 @@ namespace Requests
             catch (Exception ex)
             {
                 AddException(ex);
-                Debug.Assert(false, ex.Message);
+                Debug.WriteLine($"Request exception on attempt {AttemptCounter + 1}: {ex.Message}");
             }
             return returnItem;
         }
@@ -258,7 +258,8 @@ namespace Requests
                 return;
             if (!returnItem.Successful)
             {
-                if (Token.IsCancellationRequested || AttemptCounter++ < Options.NumberOfAttempts)
+                AttemptCounter++;
+                if (Token.IsCancellationRequested || AttemptCounter < Options.NumberOfAttempts)
                 {
                     if (Options.CancellationToken?.IsCancellationRequested == true)
                         State = RequestState.Cancelled;
@@ -272,8 +273,8 @@ namespace Requests
                 SynchronizationContext.Post((o) => Options.RequestFailed?.Invoke((IRequest)o!, returnItem.FailedReturn), this);
                 return;
             }
-            State = RequestState.Compleated;
-            SynchronizationContext.Post((o) => Options.RequestCompleated?.Invoke((IRequest)o!, returnItem.CompleatedReturn), this);
+            State = RequestState.Completed;
+            SynchronizationContext.Post((o) => Options.RequestCompleted?.Invoke((IRequest)o!, returnItem.CompletedReturn), this);
         }
 
 
@@ -284,9 +285,7 @@ namespace Requests
         {
             switch (State)
             {
-                case RequestState.Compleated:
-                    _isFinished.TrySetResult();
-                    break;
+                case RequestState.Completed:
                 case RequestState.Failed:
                     _isFinished.TrySetResult();
                     break;
@@ -303,6 +302,7 @@ namespace Requests
         {
             _exceptions.Add(exception);
             Exception = new AggregateException(_exceptions);
+            SynchronizationContext.Post((o) => Options.RequestExceptionOccurred?.Invoke((IRequest)o!, exception), this);
         }
 
         /// <summary>
@@ -374,7 +374,7 @@ namespace Requests
         /// Checks whether the <see cref="IRequest"/> has reached a final state (e.g., completed, failed, or cancelled) and will no longer change.
         /// </summary>
         /// <returns><c>true</c> if the request is in a final state; otherwise, <c>false</c>.</returns>
-        public bool HasCompleted() => State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled;
+        public bool HasCompleted() => State is RequestState.Completed or RequestState.Failed or RequestState.Cancelled;
 
         /// <summary>
         /// A class that encapsulates the return objects and notifications for <see cref="Request{TOptions, TCompleated, TFailed}"/>.
@@ -396,15 +396,15 @@ namespace Requests
             public RequestReturn(bool successful, TCompleated compleatedReturn, TFailed failedReturn)
             {
                 Successful = successful;
-                CompleatedReturn = compleatedReturn;
+                CompletedReturn = compleatedReturn;
                 FailedReturn = failedReturn;
             }
 
 
             /// <summary>
-            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleated"/> delegate is invoked.
+            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleted"/> delegate is invoked.
             /// </summary>
-            public TCompleated? CompleatedReturn { get; set; }
+            public TCompleated? CompletedReturn { get; set; }
 
             /// <summary>
             /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestFailed"/> delegate is invoked.

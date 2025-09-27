@@ -298,7 +298,7 @@ namespace Requests
             IRequest request = pair.Item;
             await request.StartRequestAsync();
 
-            if (request.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
+            if (request.State is RequestState.Completed or RequestState.Failed or RequestState.Cancelled)
             {
                 request.Dispose();
                 if (request.SubsequentRequest != null)
@@ -317,7 +317,7 @@ namespace Requests
         private async Task SubsequentRequest(IRequest request)
         {
             IRequest subRequest = request.SubsequentRequest!;
-            if (request.State == RequestState.Compleated)
+            if (request.State == RequestState.Completed)
             {
                 if (subRequest.State != RequestState.Running && subRequest.TrySetIdle())
                     await HandleRequests(new PriorityItem<IRequest>(subRequest.Priority, subRequest));
@@ -374,6 +374,7 @@ namespace Requests
                 return;
 
             Cancel();
+            _requestsChannel.Writer.TryComplete();
             _cts.Dispose();
             _disposed = true;
             GC.SuppressFinalize(this);

@@ -3,9 +3,9 @@
     /// <summary>
     /// A generic interface that defines the structure for all <see cref="IRequest"/> types.
     /// </summary>
-    /// <typeparam name="TCompleated">The return type if the request is completed successfully.</typeparam>
+    /// <typeparam name="TCompleted">The return type if the request is completed successfully.</typeparam>
     /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
-    public interface IRequestOptions<TCompleated, TFailed>
+    public interface IRequestOptions<TCompleted, TFailed>
     {
         /// <summary>
         /// Determines whether the <see cref="IRequest"/> should be automatically started upon initialization.
@@ -55,21 +55,26 @@
         /// <summary>
         /// An event that will be triggered when the <see cref="IRequest"/> is cancelled.
         /// </summary>
-        public Notify<IRequest>? RequestCancelled { get; set; }
+        public Action<IRequest>? RequestCancelled { get; set; }
 
         /// <summary>
         /// An event that will be triggered when the <see cref="IRequest"/> is started.
         /// </summary>
-        public Notify<IRequest>? RequestStarted { get; set; }
+        public Action<IRequest>? RequestStarted { get; set; }
 
         /// <summary>
         /// An event that will be triggered when the <see cref="IRequest"/> is completed.
         /// </summary>
-        public Notify<IRequest, TCompleated>? RequestCompleated { get; set; }
+        public Action<IRequest, TCompleted>? RequestCompleted { get; set; }
 
         /// <summary>
         /// An event that will be triggered when the <see cref="IRequest"/> fails.
         /// </summary>
-        public Notify<IRequest, TFailed>? RequestFailed { get; set; }
+        public Action<IRequest, TFailed>? RequestFailed { get; set; }
+
+        /// <summary>
+        /// An event that will be triggered when an exception occurs during the <see cref="IRequest"/> execution.
+        /// </summary>
+        public Action<IRequest, Exception>? RequestExceptionOccurred { get; set; }
     }
 }

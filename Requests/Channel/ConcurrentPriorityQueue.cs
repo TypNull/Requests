@@ -3,45 +3,64 @@ using System.Collections;
 namespace Requests.Channel
 {
     /// <summary>
-    /// Represents a thread-safe priority queue that allows concurrent access using segment-based storage.
+    /// Represents a thread-safe priority queue that uses a heap-based approach.
+    /// Implements O(log n) enqueue/dequeue operations with efficient concurrent access patterns.
     /// </summary>
     /// <typeparam name="TElement">The type of elements in the queue.</typeparam>
     public class ConcurrentPriorityQueue<TElement> : IEnumerable<PriorityItem<TElement>>
     {
-        private const int InitialSegmentLength = 32;
-        private const int MaxSegmentLength = 1024;
+        private const int InitialCapacity = 32;
+        private const int GrowFactor = 2;
+        private const int MinimumGrow = 4;
 
-        private readonly object _crossSegmentLock = new();
-        private volatile PriorityQueueSegment<TElement> _tail;
-        private volatile PriorityQueueSegment<TElement> _head;
-        private volatile int _count;
-        private static long _globalInsertionCounter;
+        /// <summary>Specifies the arity of the d-ary heap.</summary>
+        private const int Arity = 4;
+        /// <summary>The binary logarithm of <see cref="Arity"/>.</summary>
+        private const int Log2Arity = 2;
+
+        /// <summary>Array-backed quaternary min-heap storing priority items.</summary>
+        private PriorityItem<TElement>[] _nodes;
+
+        /// <summary>Insertion order tracking for stable priority ordering.</summary>
+        private long[] _insertionOrder;
+
+        /// <summary>Lock for synchronizing modifications to the heap structure.</summary>
+        private readonly object _lock = new();
+
+        /// <summary>The current number of items in the heap.</summary>
+        private volatile int _size;
+
+        /// <summary>Global counter for insertion order tracking.</summary>
+        private static long _globalInsertionCounter = 0;
 
         /// <summary>
         /// Gets the number of elements contained in the <see cref="ConcurrentPriorityQueue{TElement}"/>.
         /// </summary>
-        public int Count => _count;
+        public int Count => _size;
 
         /// <summary>
         /// Gets a value indicating whether the <see cref="ConcurrentPriorityQueue{TElement}"/> is empty.
         /// </summary>
-        public bool IsEmpty => _count == 0;
+        public bool IsEmpty => _size == 0;
 
         /// <summary>
         /// Gets the current capacity of the <see cref="ConcurrentPriorityQueue{TElement}"/>.
         /// </summary>
-        public int Capacity => _head?.TotalCapacity ?? 0;
+        public int Capacity => _nodes?.Length ?? 0;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ConcurrentPriorityQueue{TElement}"/> class.
         /// </summary>
-        /// <param name="maxNodes">The maximum number of nodes the queue can hold. If null, the queue will auto-resize.</param>
-        /// <exception cref="ArgumentException">Thrown if the queue size is less than or equal to zero.</exception>
-        public ConcurrentPriorityQueue(int? maxNodes = null)
+        /// <param name="initialCapacity">The initial capacity of the queue. If null, uses default capacity.</param>
+        /// <exception cref="ArgumentException">Thrown if the capacity is less than or equal to zero.</exception>
+        public ConcurrentPriorityQueue(int? initialCapacity = null)
         {
-            int capacity = maxNodes ?? InitialSegmentLength;
-            if (capacity <= 0) throw new ArgumentException("Queue size must be at least 1.");
-            _tail = _head = new PriorityQueueSegment<TElement>(capacity);
+            int capacity = initialCapacity ?? InitialCapacity;
+            if (capacity <= 0) throw new ArgumentException("Queue size must be at least 1.", nameof(initialCapacity));
+
+            _nodes = new PriorityItem<TElement>[capacity];
+            _insertionOrder = new long[capacity];
+            _size = 0;
         }
 
         /// <summary>
@@ -49,28 +68,41 @@ namespace Requests.Channel
         /// </summary>
         public void Clear()
         {
-            lock (_crossSegmentLock)
+            lock (_lock)
             {
-                _tail?.EnsureFrozenForEnqueues();
-                _tail = _head = new PriorityQueueSegment<TElement>(InitialSegmentLength);
-                _count = 0;
+                Array.Clear(_nodes, 0, _size);
+                Array.Clear(_insertionOrder, 0, _size);
+                _size = 0;
             }
         }
 
         /// <summary>
-        /// Determines whether the <see cref="ConcurrentPriorityQueue{TElement}"/> contains a specific <see cref="QueueNode"/>.
+        /// Determines whether the <see cref="ConcurrentPriorityQueue{TElement}"/> contains a specific item.
         /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to locate in the queue.</param>
-        /// <returns>true if the <see cref="QueueNode"/> is found in the queue; otherwise, false.</returns>
-        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="node"/> is null.</exception>
-        public bool Contains(QueueNode node)
+        /// <param name="item">The item to locate in the queue.</param>
+        /// <returns>true if the item is found in the queue; otherwise, false.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="item"/> is null.</exception>
+        public bool Contains(PriorityItem<TElement> item)
         {
-            ArgumentNullException.ThrowIfNull(node);
-            return TryFindNode(node.Item, out _);
+            ArgumentNullException.ThrowIfNull(item);
+
+            lock (_lock)
+            {
+                for (int i = 0; i < _size; i++)
+                {
+                    if (ReferenceEquals(_nodes[i], item) ||
+                        (item != null && item.Equals(_nodes[i])))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
 
         /// <summary>
         /// Adds a <see cref="PriorityItem{TElement}"/> to the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// Uses heap operations for O(log n).
         /// </summary>
         /// <param name="item">The <see cref="PriorityItem{TElement}"/> to add to the queue.</param>
         /// <exception cref="ArgumentNullException">Thrown if the <paramref name="item"/> is null.</exception>
@@ -78,40 +110,29 @@ namespace Requests.Channel
         {
             ArgumentNullException.ThrowIfNull(item);
 
-            if (!_tail.TryEnqueue(item))
+            lock (_lock)
             {
-                EnqueueSlow(item);
-            }
-            Interlocked.Increment(ref _count);
-        }
+                int currentSize = _size;
 
-        private void EnqueueSlow(PriorityItem<TElement> item)
-        {
-            while (true)
-            {
-                PriorityQueueSegment<TElement> tail = _tail;
-
-                if (tail.TryEnqueue(item))
+                // Ensure capacity
+                if (_nodes.Length == currentSize)
                 {
-                    return;
+                    Grow(currentSize + 1);
                 }
 
-                lock (_crossSegmentLock)
-                {
-                    if (tail == _tail)
-                    {
-                        tail.EnsureFrozenForEnqueues();
-                        int nextSize = Math.Min(tail.Capacity * 2, MaxSegmentLength);
-                        PriorityQueueSegment<TElement> newTail = new(nextSize);
-                        tail._nextSegment = newTail;
-                        _tail = newTail;
-                    }
-                }
+                // Add item to the end and bubble up to maintain heap property
+                long insertionIndex = Interlocked.Increment(ref _globalInsertionCounter);
+                _insertionOrder[currentSize] = insertionIndex;
+                _nodes[currentSize] = item;
+                _size = currentSize + 1;
+
+                // Restore heap property by moving the new item up
+                MoveUp(currentSize);
             }
         }
 
         /// <summary>
-        /// Removes and returns the <see cref="PriorityItem{TElement}"/> with the highest priority from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// Removes and returns the <see cref="PriorityItem{TElement}"/> with the highest priority.
         /// </summary>
         /// <returns>The <see cref="PriorityItem{TElement}"/> with the highest priority.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
@@ -123,65 +144,32 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Attempts to remove and return the <see cref="PriorityItem{TElement}"/> with the highest priority from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// Attempts to remove and return the <see cref="PriorityItem{TElement}"/> with the highest priority.
+        /// Uses heap operations for O(log n).
         /// </summary>
-        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was removed and returned; otherwise, false.</returns>
+        /// <param name="item">When this method returns, contains the highest priority item if successful.</param>
+        /// <returns>true if an item was successfully removed; otherwise, false.</returns>
         public bool TryDequeue(out PriorityItem<TElement> item)
         {
-            item = null!;
-
-            if (!FindHighestPriorityItem(out PriorityQueueSegment<TElement>? bestSegment, out PriorityItem<TElement>? bestItem))
-                return false;
-
-            if (bestSegment.TryRemoveSpecific(bestItem))
+            lock (_lock)
             {
-                item = bestItem;
-                Interlocked.Decrement(ref _count);
-                CleanupEmptySegments();
+                if (_size == 0)
+                {
+                    item = null!;
+                    return false;
+                }
+
+                // Get the root (highest priority item)
+                item = _nodes[0];
+
+                // Move the last item to root and restore heap property
+                RemoveRootNode();
                 return true;
             }
-
-            return false;
-        }
-
-        private bool FindHighestPriorityItem(out PriorityQueueSegment<TElement> bestSegment, out PriorityItem<TElement> bestItem)
-        {
-            bestSegment = null!;
-            bestItem = null!;
-            long bestInsertionIndex = long.MaxValue;
-
-            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
-            {
-                if (segment.TryPeekHighestPriority(out PriorityItem<TElement>? item, out long insertionIndex))
-                {
-                    if (bestItem == null || item.Priority < bestItem.Priority ||
-                        (item.Priority == bestItem.Priority && insertionIndex < bestInsertionIndex))
-                    {
-                        bestSegment = segment;
-                        bestItem = item;
-                        bestInsertionIndex = insertionIndex;
-                    }
-                }
-            }
-
-            return bestItem != null;
         }
 
         /// <summary>
-        /// Resizes the <see cref="ConcurrentPriorityQueue{TElement}"/> to the specified number of nodes.
-        /// </summary>
-        /// <param name="maxNodes">The new maximum number of nodes the queue can hold.</param>
-        /// <exception cref="ArgumentException">Thrown if the new size is less than or equal to zero.</exception>
-        /// <exception cref="InvalidOperationException">Thrown if the new size is less than the current number of nodes in the queue.</exception>
-        public void Resize(int maxNodes)
-        {
-            if (maxNodes <= 0) throw new ArgumentException("Queue size must be at least 1.");
-            if (maxNodes < _count) throw new InvalidOperationException($"Cannot resize to {maxNodes} nodes when current queue contains {_count} nodes.");
-        }
-
-        /// <summary>
-        /// Returns the <see cref="PriorityItem{TElement}"/> with the highest priority in the <see cref="ConcurrentPriorityQueue{TElement}"/> without removing it.
+        /// Returns the <see cref="PriorityItem{TElement}"/> with the highest priority without removing it.
         /// </summary>
         /// <returns>The <see cref="PriorityItem{TElement}"/> with the highest priority.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
@@ -193,24 +181,32 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Attempts to return the <see cref="PriorityItem{TElement}"/> with the highest priority in the <see cref="ConcurrentPriorityQueue{TElement}"/> without removing it.
+        /// Attempts to return the <see cref="PriorityItem{TElement}"/> with the highest priority without removing it.
         /// </summary>
-        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was returned; otherwise, false.</returns>
+        /// <param name="item">When this method returns, contains the highest priority item if successful.</param>
+        /// <returns>true if an item was found; otherwise, false.</returns>
         public bool TryPeek(out PriorityItem<TElement> item)
         {
-            return FindHighestPriorityItem(out _, out item);
+            lock (_lock)
+            {
+                if (_size == 0)
+                {
+                    item = null!;
+                    return false;
+                }
+
+                item = _nodes[0];
+                return true;
+            }
         }
 
         /// <summary>
-        /// Attempts to add a <see cref="PriorityItem{TElement}"/> to the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// Attempts to add a <see cref="PriorityItem{TElement}"/> to the queue.
         /// </summary>
-        /// <param name="item">The <see cref="PriorityItem{TElement}"/> to add to the queue.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was added; otherwise, false.</returns>
-        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="item"/> is null.</exception>
+        /// <param name="item">The item to add.</param>
+        /// <returns>true if the item was added successfully; otherwise, false.</returns>
         public bool TryEnqueue(PriorityItem<TElement> item)
         {
-            ArgumentNullException.ThrowIfNull(item);
             try
             {
                 Enqueue(item);
@@ -223,349 +219,328 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Updates the priority of the specified <see cref="QueueNode"/>.
+        /// Attempts to remove a specific <see cref="PriorityItem{TElement}"/> from the queue.
         /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to update.</param>
-        /// <param name="priority">The new priority value.</param>
-        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="node"/> is null.</exception>
-        /// <exception cref="InvalidOperationException">Thrown if the <paramref name="node"/> is not in the queue.</exception>
-        public void UpdatePriority(QueueNode node, int priority)
-        {
-            ArgumentNullException.ThrowIfNull(node);
-            if (!TryRemove(node.Item))
-                throw new InvalidOperationException("Cannot update priority on a node that is not in the queue.");
-
-            PriorityItem<TElement> updatedItem = node.Item with { Priority = priority };
-            Enqueue(updatedItem);
-        }
-
-        /// <summary>
-        /// Removes the specified <see cref="QueueNode"/> from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-        /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to remove.</param>
-        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="node"/> is null.</exception>
-        /// <exception cref="InvalidOperationException">Thrown if the <paramref name="node"/> is not in the queue.</exception>
-        public void Remove(QueueNode node)
-        {
-            ArgumentNullException.ThrowIfNull(node);
-            if (!TryRemove(node.Item))
-                throw new InvalidOperationException("Cannot remove a node that is not in the queue.");
-        }
-
-        /// <summary>
-        /// Attempts to remove a <see cref="PriorityItem{TElement}"/> from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-        /// </summary>
-        /// <param name="item">The <see cref="PriorityItem{TElement}"/> to remove.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was removed; otherwise, false.</returns>
+        /// <param name="item">The item to remove.</param>
+        /// <returns>true if the item was removed; otherwise, false.</returns>
         /// <exception cref="ArgumentNullException">Thrown if the <paramref name="item"/> is null.</exception>
         public bool TryRemove(PriorityItem<TElement> item)
         {
             ArgumentNullException.ThrowIfNull(item);
 
-            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
+            lock (_lock)
             {
-                if (segment.TryRemoveSpecific(item))
-                {
-                    Interlocked.Decrement(ref _count);
-                    return true;
-                }
-            }
-            return false;
-        }
+                // Find the item in the heap
+                int index = FindIndex(item);
+                if (index < 0) return false;
 
-        private bool TryFindNode(PriorityItem<TElement> item, out PriorityQueueSegment<TElement> segment)
-        {
-            segment = null!;
-            for (PriorityQueueSegment<TElement>? seg = _head; seg != null; seg = seg._nextSegment)
-            {
-                if (seg.Contains(item))
-                {
-                    segment = seg;
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private void CleanupEmptySegments()
-        {
-            lock (_crossSegmentLock)
-            {
-                while (_head._nextSegment != null && _head.IsEmpty)
-                {
-                    _head = _head._nextSegment;
-                }
+                // Remove the item at the found index
+                RemoveAt(index);
+                return true;
             }
         }
 
         /// <summary>
-        /// Resets the specified <see cref="QueueNode"/> by setting its index to 0.
+        /// Copies the elements stored in the queue to a new array.
         /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to reset.</param>
-        /// <exception cref="ArgumentNullException">Thrown if the <paramref name="node"/> is null.</exception>
-        /// <exception cref="InvalidOperationException">Thrown if the <paramref name="node"/> is still in the queue.</exception>
-        public void ResetNode(QueueNode node)
+        /// <returns>A new array containing a snapshot of elements from the queue.</returns>
+        public PriorityItem<TElement>[] ToArray()
         {
-            ArgumentNullException.ThrowIfNull(node);
-            if (Contains(node))
-                throw new InvalidOperationException("Cannot reset a node that is still in the queue.");
-        }
-
-        /// <summary>
-        /// Returns an enumerator that iterates through the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-        /// </summary>
-        /// <returns>An enumerator that can be used to iterate through the queue.</returns>
-        public IEnumerator<PriorityItem<TElement>> GetEnumerator()
-        {
-            List<PriorityItem<TElement>> items = new();
-            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
+            lock (_lock)
             {
-                items.AddRange(segment.ToArray());
+                if (_size == 0) return Array.Empty<PriorityItem<TElement>>();
+
+                PriorityItem<TElement>[] result = new PriorityItem<TElement>[_size];
+                Array.Copy(_nodes, 0, result, 0, _size);
+
+                // Sort by priority, then by insertion order for stability
+                Array.Sort(result, (a, b) =>
+                {
+                    int priorityComparison = a.Priority.CompareTo(b.Priority);
+                    if (priorityComparison != 0) return priorityComparison;
+
+                    // For items with same priority, maintain insertion order
+                    int aIndex = FindInsertionIndex(a);
+                    int bIndex = FindInsertionIndex(b);
+                    return aIndex.CompareTo(bIndex);
+                });
+
+                return result;
             }
-
-            items.Sort((a, b) =>
-            {
-                int priorityComparison = a.Priority.CompareTo(b.Priority);
-                return priorityComparison != 0 ? priorityComparison : 0;
-            });
-
-            return items.GetEnumerator();
         }
 
         /// <summary>
-        /// Returns an enumerator that iterates through the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-        /// </summary>
-        /// <returns>An enumerator that can be used to iterate through the queue.</returns>
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-
-        /// <summary>
-        /// Validates the internal structure of the <see cref="ConcurrentPriorityQueue{TElement}"/> to ensure it is a valid heap.
+        /// Validates the internal structure of the queue to ensure it maintains heap property.
         /// </summary>
         /// <returns>true if the queue is a valid heap; otherwise, false.</returns>
         public bool IsValidQueue()
         {
-            return true;
+            lock (_lock)
+            {
+                for (int i = 0; i < _size; i++)
+                {
+                    int leftChild = GetFirstChildIndex(i);
+                    int rightBound = Math.Min(leftChild + Arity, _size);
+
+                    for (int child = leftChild; child < rightBound; child++)
+                    {
+                        if (CompareNodes(i, child) > 0)
+                        {
+                            return false; // Heap property violated
+                        }
+                    }
+                }
+                return true;
+            }
         }
 
         /// <summary>
-        /// Copies the elements stored in the <see cref="ConcurrentPriorityQueue{TElement}"/> to a new array.
+        /// Returns an enumerator that iterates through the queue in heap order (not priority order).
         /// </summary>
-        /// <returns>A new array containing a snapshot of elements copied from the <see cref="ConcurrentPriorityQueue{TElement}"/>.</returns>
-        public PriorityItem<TElement>[] ToArray()
+        /// <returns>An enumerator for the queue.</returns>
+        public IEnumerator<PriorityItem<TElement>> GetEnumerator()
         {
-            List<PriorityItem<TElement>> items = new();
-            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
+            PriorityItem<TElement>[] snapshot;
+            lock (_lock)
             {
-                items.AddRange(segment.ToArray());
+                snapshot = new PriorityItem<TElement>[_size];
+                Array.Copy(_nodes, 0, snapshot, 0, _size);
             }
 
-            items.Sort((a, b) => a.Priority.CompareTo(b.Priority));
-            return items.ToArray();
+            foreach (PriorityItem<TElement> item in snapshot)
+            {
+                if (item != null) yield return item;
+            }
         }
 
         /// <summary>
-        /// Represents a node in the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// Returns an enumerator that iterates through the queue.
         /// </summary>
-        public record QueueNode
+        /// <returns>An enumerator for the queue.</returns>
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        #region Private Helper Methods
+
+        /// <summary>
+        /// Grows the capacity of the internal arrays to accommodate more items.
+        /// </summary>
+        /// <param name="minCapacity">The minimum required capacity.</param>
+        private void Grow(int minCapacity)
         {
-            /// <summary>
-            /// Gets the <see cref="PriorityItem{TElement}"/> associated with this node.
-            /// </summary>
-            public PriorityItem<TElement> Item { get; protected set; }
+            int oldCapacity = _nodes.Length;
+            int newCapacity = Math.Max(oldCapacity * GrowFactor, oldCapacity + MinimumGrow);
 
-            /// <summary>
-            /// Gets or sets the index of this node in the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-            /// </summary>
-            public int Index { get; set; }
+            if (newCapacity < minCapacity)
+                newCapacity = minCapacity;
 
-            /// <summary>
-            /// Gets the priority of this node.
-            /// </summary>
-            public float Priority => Item.Priority;
-
-            /// <summary>
-            /// Gets the insertion index of this node.
-            /// </summary>
-            public long InsertionIndex { get; }
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="QueueNode"/> class.
-            /// </summary>
-            /// <param name="item">The <see cref="PriorityItem{TElement}"/> associated with this node.</param>
-            /// <param name="insertionIndex">The insertion index of this node.</param>
-            public QueueNode(PriorityItem<TElement> item, long insertionIndex)
-            {
-                Item = item;
-                InsertionIndex = insertionIndex;
-                Index = 0;
-            }
-
-            /// <summary>
-            /// Updates the priority of the <see cref="PriorityItem{TElement}"/> associated with this node.
-            /// </summary>
-            /// <param name="priority">The new priority value.</param>
-            internal void UpdatePriority(int priority) => Item = Item with { Priority = priority };
-
-            /// <summary>
-            /// Implicit conversion operator to return the <see cref="PriorityItem{TElement}"/> associated with this node.
-            /// </summary>
-            /// <param name="node">The <see cref="QueueNode"/> to convert.</param>
-            public static implicit operator PriorityItem<TElement>(QueueNode node) => node.Item;
+            Array.Resize(ref _nodes, newCapacity);
+            Array.Resize(ref _insertionOrder, newCapacity);
         }
 
-        private class PriorityQueueSegment<T>
+        /// <summary>
+        /// Removes the root node and restores heap property.
+        /// </summary>
+        private void RemoveRootNode()
         {
-            internal volatile PriorityQueueSegment<T>? _nextSegment;
-            private readonly PriorityItem<T>[] _slots;
-            private readonly long[] _insertionIndexes;
-            private volatile bool _frozenForEnqueues;
-            private volatile int _headAndTail;
-            private readonly int _slotsMask;
-
-            private const int HeadMask = 0x0000FFFF;
-            private const int TailShift = 16;
-
-            internal int Capacity => _slots.Length;
-            internal int TotalCapacity => Capacity + (_nextSegment?.TotalCapacity ?? 0);
-            internal bool IsEmpty => Head == Tail;
-
-            private int Head => _headAndTail & HeadMask;
-            private int Tail => (_headAndTail >> TailShift) & HeadMask;
-
-            internal PriorityQueueSegment(int capacity)
+            int lastIndex = --_size;
+            if (lastIndex > 0)
             {
-                capacity = RoundUpToPowerOf2(capacity);
-                _slots = new PriorityItem<T>[capacity];
-                _insertionIndexes = new long[capacity];
-                _slotsMask = capacity - 1;
+                // Move last element to root and restore heap property
+                _nodes[0] = _nodes[lastIndex];
+                _insertionOrder[0] = _insertionOrder[lastIndex];
+                MoveDown(0);
             }
 
-            private static int RoundUpToPowerOf2(int value)
-            {
-                value--;
-                value |= value >> 1;
-                value |= value >> 2;
-                value |= value >> 4;
-                value |= value >> 8;
-                value |= value >> 16;
-                return value + 1;
-            }
-
-            internal bool TryEnqueue(PriorityItem<T> item)
-            {
-                if (_frozenForEnqueues) return false;
-
-                SpinWait spinner = default;
-                while (true)
-                {
-                    int currentHeadAndTail = _headAndTail;
-                    int head = currentHeadAndTail & HeadMask;
-                    int tail = (currentHeadAndTail >> TailShift) & HeadMask;
-                    int nextTail = (tail + 1) & _slotsMask;
-
-                    if (nextTail == head) return false;
-
-                    if (Interlocked.CompareExchange(ref _headAndTail,
-                        (nextTail << TailShift) | head, currentHeadAndTail) == currentHeadAndTail)
-                    {
-                        _slots[tail] = item;
-                        _insertionIndexes[tail] = Interlocked.Increment(ref _globalInsertionCounter);
-                        return true;
-                    }
-
-                    spinner.SpinOnce();
-                }
-            }
-
-            internal bool TryPeekHighestPriority(out PriorityItem<T> result, out long insertionIndex)
-            {
-                result = null!;
-                insertionIndex = long.MaxValue;
-
-                if (IsEmpty) return false;
-
-                int head = Head;
-                int tail = Tail;
-
-                PriorityItem<T> bestItem = null!;
-                long bestInsertionIndex = long.MaxValue;
-
-                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
-                {
-                    PriorityItem<T> item = _slots[i];
-                    if (item != null && (bestItem == null || item.Priority < bestItem.Priority ||
-                        (item.Priority == bestItem.Priority && _insertionIndexes[i] < bestInsertionIndex)))
-                    {
-                        bestItem = item;
-                        bestInsertionIndex = _insertionIndexes[i];
-                    }
-                }
-
-                if (bestItem != null)
-                {
-                    result = bestItem;
-                    insertionIndex = bestInsertionIndex;
-                    return true;
-                }
-                return false;
-            }
-
-            internal bool TryRemoveSpecific(PriorityItem<T> targetItem)
-            {
-                if (IsEmpty) return false;
-
-                int head = Head;
-                int tail = Tail;
-
-                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
-                {
-                    if (ReferenceEquals(_slots[i], targetItem) ||
-                        (targetItem != null && targetItem.Equals(_slots[i])))
-                    {
-                        _slots[i] = null!;
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            internal bool Contains(PriorityItem<T> item)
-            {
-                int head = Head;
-                int tail = Tail;
-
-                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
-                {
-                    if (ReferenceEquals(_slots[i], item) || (item != null && item.Equals(_slots[i])))
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            internal void EnsureFrozenForEnqueues()
-            {
-                _frozenForEnqueues = true;
-            }
-
-            internal PriorityItem<T>[] ToArray()
-            {
-                List<PriorityItem<T>> result = new();
-                int head = Head;
-                int tail = Tail;
-
-                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
-                {
-                    if (_slots[i] != null)
-                    {
-                        result.Add(_slots[i]);
-                    }
-                }
-
-                return result.ToArray();
-            }
+            // Clear the last position
+            _nodes[lastIndex] = null!;
+            _insertionOrder[lastIndex] = 0;
         }
+
+        /// <summary>
+        /// Removes the item at the specified index and restores heap property.
+        /// </summary>
+        /// <param name="index">The index of the item to remove.</param>
+        private void RemoveAt(int index)
+        {
+            int lastIndex = --_size;
+
+            if (index < lastIndex)
+            {
+                // Move last element to the removed position
+                PriorityItem<TElement> lastNode = _nodes[lastIndex];
+                long lastOrder = _insertionOrder[lastIndex];
+                PriorityItem<TElement> removedNode = _nodes[index];
+                long removedOrder = _insertionOrder[index];
+
+                _nodes[index] = lastNode;
+                _insertionOrder[index] = lastOrder;
+
+                // Determine whether to move up or down
+                if (CompareByPriorityAndOrder(lastNode, lastOrder, removedNode, removedOrder) < 0)
+                {
+                    MoveUp(index);
+                }
+                else
+                {
+                    MoveDown(index);
+                }
+            }
+
+            // Clear the last position
+            _nodes[lastIndex] = null!;
+            _insertionOrder[lastIndex] = 0;
+        }
+
+        /// <summary>
+        /// Moves an item up the heap to restore heap property.
+        /// </summary>
+        /// <param name="nodeIndex">The index of the node to move up.</param>
+        private void MoveUp(int nodeIndex)
+        {
+            PriorityItem<TElement> node = _nodes[nodeIndex];
+            long order = _insertionOrder[nodeIndex];
+
+            while (nodeIndex > 0)
+            {
+                int parentIndex = GetParentIndex(nodeIndex);
+
+                if (CompareByPriorityAndOrder(node, order, _nodes[parentIndex], _insertionOrder[parentIndex]) >= 0)
+                    break;
+
+                // Move parent down
+                _nodes[nodeIndex] = _nodes[parentIndex];
+                _insertionOrder[nodeIndex] = _insertionOrder[parentIndex];
+                nodeIndex = parentIndex;
+            }
+
+            _nodes[nodeIndex] = node;
+            _insertionOrder[nodeIndex] = order;
+        }
+
+        /// <summary>
+        /// Moves an item down the heap to restore heap property.
+        /// </summary>
+        /// <param name="nodeIndex">The index of the node to move down.</param>
+        private void MoveDown(int nodeIndex)
+        {
+            PriorityItem<TElement> node = _nodes[nodeIndex];
+            long order = _insertionOrder[nodeIndex];
+
+            int i;
+            while ((i = GetFirstChildIndex(nodeIndex)) < _size)
+            {
+                // Find the child with minimal priority
+                int minChildIndex = i;
+                PriorityItem<TElement> minChild = _nodes[i];
+                long minChildOrder = _insertionOrder[i];
+
+                int childUpperBound = Math.Min(i + Arity, _size);
+                for (int child = i + 1; child < childUpperBound; child++)
+                {
+                    if (CompareByPriorityAndOrder(_nodes[child], _insertionOrder[child], minChild, minChildOrder) < 0)
+                    {
+                        minChildIndex = child;
+                        minChild = _nodes[child];
+                        minChildOrder = _insertionOrder[child];
+                    }
+                }
+
+                // If heap property is satisfied, stop
+                if (CompareByPriorityAndOrder(node, order, minChild, minChildOrder) <= 0)
+                    break;
+
+                // Move minimal child up
+                _nodes[nodeIndex] = minChild;
+                _insertionOrder[nodeIndex] = minChildOrder;
+                nodeIndex = minChildIndex;
+            }
+
+            _nodes[nodeIndex] = node;
+            _insertionOrder[nodeIndex] = order;
+        }
+
+        /// <summary>
+        /// Compares two nodes in the heap for ordering.
+        /// </summary>
+        /// <param name="indexA">Index of first node.</param>
+        /// <param name="indexB">Index of second node.</param>
+        /// <returns>Negative if A has higher priority, positive if B has higher priority, zero if equal.</returns>
+        private int CompareNodes(int indexA, int indexB)
+        {
+            return CompareByPriorityAndOrder(
+                _nodes[indexA], _insertionOrder[indexA],
+                _nodes[indexB], _insertionOrder[indexB]);
+        }
+
+        /// <summary>
+        /// Compares two items by priority and insertion order.
+        /// </summary>
+        /// <param name="itemA">First item.</param>
+        /// <param name="orderA">First item's insertion order.</param>
+        /// <param name="itemB">Second item.</param>
+        /// <param name="orderB">Second item's insertion order.</param>
+        /// <returns>Comparison result for heap ordering.</returns>
+        private static int CompareByPriorityAndOrder(PriorityItem<TElement> itemA, long orderA, PriorityItem<TElement> itemB, long orderB)
+        {
+            // Lower priority value = higher priority (min-heap for priorities)
+            int priorityComparison = itemA.Priority.CompareTo(itemB.Priority);
+            if (priorityComparison != 0)
+                return priorityComparison;
+
+            // For equal priorities, use insertion order (FIFO for same priority)
+            return orderA.CompareTo(orderB);
+        }
+
+        /// <summary>
+        /// Finds the index of a specific item in the heap.
+        /// </summary>
+        /// <param name="item">The item to find.</param>
+        /// <returns>The index of the item, or -1 if not found.</returns>
+        private int FindIndex(PriorityItem<TElement> item)
+        {
+            for (int i = 0; i < _size; i++)
+            {
+                if (ReferenceEquals(_nodes[i], item) ||
+                    (item != null && item.Equals(_nodes[i])))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Finds the insertion index for a given item (used for sorting).
+        /// </summary>
+        /// <param name="item">The item to find insertion index for.</param>
+        /// <returns>The insertion index, or -1 if not found.</returns>
+        private int FindInsertionIndex(PriorityItem<TElement> item)
+        {
+            for (int i = 0; i < _size; i++)
+            {
+                if (ReferenceEquals(_nodes[i], item) ||
+                    (item != null && item.Equals(_nodes[i])))
+                {
+                    return (int)_insertionOrder[i];
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Gets the index of an element's parent in the heap.
+        /// </summary>
+        /// <param name="index">The child index.</param>
+        /// <returns>The parent index.</returns>
+        private static int GetParentIndex(int index) => (index - 1) >> Log2Arity;
+
+        /// <summary>
+        /// Gets the index of the first child of an element in the heap.
+        /// </summary>
+        /// <param name="index">The parent index.</param>
+        /// <returns>The first child index.</returns>
+        private static int GetFirstChildIndex(int index) => (index << Log2Arity) + 1;
+
+        #endregion
     }
 }
