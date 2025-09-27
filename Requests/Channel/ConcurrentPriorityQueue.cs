@@ -1,32 +1,21 @@
-﻿using System.Collections;
+using System.Collections;
 
 namespace Requests.Channel
 {
     /// <summary>
-    /// Represents a thread-safe priority queue that allows concurrent access.
+    /// Represents a thread-safe priority queue that allows concurrent access using segment-based storage.
     /// </summary>
     /// <typeparam name="TElement">The type of elements in the queue.</typeparam>
     public class ConcurrentPriorityQueue<TElement> : IEnumerable<PriorityItem<TElement>>
     {
-        private int _count;
-        private QueueNode[] _nodes;
-        private long _totalEnqueued;
-        private readonly bool _autoResize;
-        private readonly ReaderWriterLockSlim _lock = new();
+        private const int InitialSegmentLength = 32;
+        private const int MaxSegmentLength = 1024;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ConcurrentPriorityQueue{TElement}"/> class.
-        /// </summary>
-        /// <param name="maxNodes">The maximum number of nodes the queue can hold. If null, the queue will auto-resize.</param>
-        /// <exception cref="ArgumentException">Thrown if the queue size is less than or equal to zero.</exception>
-        public ConcurrentPriorityQueue(int? maxNodes = null)
-        {
-            if (maxNodes <= 0) throw new ArgumentException("Queue size must be at least 1.");
-            _count = 0;
-            _autoResize = maxNodes == null;
-            _nodes = new QueueNode[maxNodes ?? 32 + 1];
-            _totalEnqueued = 0;
-        }
+        private readonly object _crossSegmentLock = new();
+        private volatile PriorityQueueSegment<TElement> _tail;
+        private volatile PriorityQueueSegment<TElement> _head;
+        private volatile int _count;
+        private static long _globalInsertionCounter;
 
         /// <summary>
         /// Gets the number of elements contained in the <see cref="ConcurrentPriorityQueue{TElement}"/>.
@@ -41,16 +30,31 @@ namespace Requests.Channel
         /// <summary>
         /// Gets the current capacity of the <see cref="ConcurrentPriorityQueue{TElement}"/>.
         /// </summary>
-        public int Capacity => _nodes.Length - 1;
+        public int Capacity => _head?.TotalCapacity ?? 0;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="ConcurrentPriorityQueue{TElement}"/> class.
+        /// </summary>
+        /// <param name="maxNodes">The maximum number of nodes the queue can hold. If null, the queue will auto-resize.</param>
+        /// <exception cref="ArgumentException">Thrown if the queue size is less than or equal to zero.</exception>
+        public ConcurrentPriorityQueue(int? maxNodes = null)
+        {
+            int capacity = maxNodes ?? InitialSegmentLength;
+            if (capacity <= 0) throw new ArgumentException("Queue size must be at least 1.");
+            _tail = _head = new PriorityQueueSegment<TElement>(capacity);
+        }
 
         /// <summary>
         /// Removes all elements from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
         /// </summary>
         public void Clear()
         {
-            _lock.EnterWriteLock();
-            try { Array.Clear(_nodes, 1, _count); _count = 0; }
-            finally { _lock.ExitWriteLock(); }
+            lock (_crossSegmentLock)
+            {
+                _tail?.EnsureFrozenForEnqueues();
+                _tail = _head = new PriorityQueueSegment<TElement>(InitialSegmentLength);
+                _count = 0;
+            }
         }
 
         /// <summary>
@@ -59,15 +63,10 @@ namespace Requests.Channel
         /// <param name="node">The <see cref="QueueNode"/> to locate in the queue.</param>
         /// <returns>true if the <see cref="QueueNode"/> is found in the queue; otherwise, false.</returns>
         /// <exception cref="ArgumentNullException">Thrown if the <paramref name="node"/> is null.</exception>
-        /// <exception cref="ArgumentException">Thrown if the <paramref name="node"/> index is out of range.</exception>
         public bool Contains(QueueNode node)
         {
             ArgumentNullException.ThrowIfNull(node);
-            if (node.Index < 0 || node.Index >= _nodes.Length) throw new ArgumentException("Node index is out of range.");
-
-            _lock.EnterReadLock();
-            try { return _nodes[node.Index] == node; }
-            finally { _lock.ExitReadLock(); }
+            return TryFindNode(node.Item, out _);
         }
 
         /// <summary>
@@ -75,89 +74,41 @@ namespace Requests.Channel
         /// </summary>
         /// <param name="item">The <see cref="PriorityItem{TElement}"/> to add to the queue.</param>
         /// <exception cref="ArgumentNullException">Thrown if the <paramref name="item"/> is null.</exception>
-        /// <exception cref="InvalidOperationException">Thrown if the queue is full and auto-resize is disabled.</exception>
         public void Enqueue(PriorityItem<TElement> item)
         {
             ArgumentNullException.ThrowIfNull(item);
-            if (_count >= _nodes.Length - 1)
-                if (_autoResize) Resize((int)(_count * 1.5));
-                else throw new InvalidOperationException("Queue is full.");
 
-            _lock.EnterWriteLock();
-            try
+            if (!_tail.TryEnqueue(item))
             {
-                var newNode = new QueueNode(item, Interlocked.Increment(ref _totalEnqueued)) { Index = ++_count };
-                _nodes[_count] = newNode;
-                BubbleUp(newNode);
+                EnqueueSlow(item);
             }
-            finally { _lock.ExitWriteLock(); }
+            Interlocked.Increment(ref _count);
         }
 
-        /// <summary>
-        /// Moves the specified <see cref="QueueNode"/> up the heap if it has a higher priority.
-        /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to move up.</param>
-        private void BubbleUp(QueueNode node)
+        private void EnqueueSlow(PriorityItem<TElement> item)
         {
-            while (node.Index > 1 && !HasHigherPriority(_nodes[node.Index >> 1], node))
+            while (true)
             {
-                var parent = _nodes[node.Index >> 1];
-                _nodes[node.Index] = parent;
-                parent.Index = node.Index;
-                node.Index >>= 1;
-            }
-            _nodes[node.Index] = node;
-        }
+                PriorityQueueSegment<TElement> tail = _tail;
 
-        /// <summary>
-        /// Moves the specified <see cref="QueueNode"/> down the heap if it has a lower priority.
-        /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> to move down.</param>
-        private void BubbleDown(QueueNode node)
-        {
-            int finalIndex;
-            while ((finalIndex = node.Index) > 0)
-            {
-                var leftChildIndex = 2 * finalIndex;
-                if (leftChildIndex > _count) break;
-
-                var rightChildIndex = leftChildIndex + 1;
-                var leftChild = _nodes[leftChildIndex];
-                if (HasHigherPriority(leftChild, node))
+                if (tail.TryEnqueue(item))
                 {
-                    if (rightChildIndex > _count || HasHigherPriority(leftChild, _nodes[rightChildIndex]))
+                    return;
+                }
+
+                lock (_crossSegmentLock)
+                {
+                    if (tail == _tail)
                     {
-                        _nodes[finalIndex] = leftChild;
-                        leftChild.Index = finalIndex;
-                        node.Index = leftChildIndex;
-                    }
-                    else
-                    {
-                        var rightChild = _nodes[rightChildIndex];
-                        _nodes[finalIndex] = rightChild;
-                        rightChild.Index = finalIndex;
-                        node.Index = rightChildIndex;
+                        tail.EnsureFrozenForEnqueues();
+                        int nextSize = Math.Min(tail.Capacity * 2, MaxSegmentLength);
+                        PriorityQueueSegment<TElement> newTail = new(nextSize);
+                        tail._nextSegment = newTail;
+                        _tail = newTail;
                     }
                 }
-                else if (rightChildIndex <= _count && HasHigherPriority(_nodes[rightChildIndex], node))
-                {
-                    var rightChild = _nodes[rightChildIndex];
-                    _nodes[finalIndex] = rightChild;
-                    rightChild.Index = finalIndex;
-                    node.Index = rightChildIndex;
-                }
-                else break;
             }
-            _nodes[node.Index] = node;
         }
-
-        /// <summary>
-        /// Determines whether the first <see cref="QueueNode"/> has a higher priority than the second <see cref="QueueNode"/>.
-        /// </summary>
-        /// <param name="higher">The first <see cref="QueueNode"/> to compare.</param>
-        /// <param name="lower">The second <see cref="QueueNode"/> to compare.</param>
-        /// <returns>true if the first <see cref="QueueNode"/> has a higher priority; otherwise, false.</returns>
-        private static bool HasHigherPriority(QueueNode higher, QueueNode lower) => higher.Priority < lower.Priority || (higher.Priority == lower.Priority && higher.InsertionIndex < lower.InsertionIndex);
 
         /// <summary>
         /// Removes and returns the <see cref="PriorityItem{TElement}"/> with the highest priority from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
@@ -166,23 +117,55 @@ namespace Requests.Channel
         /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
         public PriorityItem<TElement> Dequeue()
         {
-            if (_count <= 0) throw new InvalidOperationException("Cannot dequeue from an empty queue.");
+            if (!TryDequeue(out PriorityItem<TElement>? item))
+                throw new InvalidOperationException("Cannot dequeue from an empty queue.");
+            return item;
+        }
 
-            _lock.EnterWriteLock();
-            try
+        /// <summary>
+        /// Attempts to remove and return the <see cref="PriorityItem{TElement}"/> with the highest priority from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
+        /// </summary>
+        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
+        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was removed and returned; otherwise, false.</returns>
+        public bool TryDequeue(out PriorityItem<TElement> item)
+        {
+            item = null!;
+
+            if (!FindHighestPriorityItem(out PriorityQueueSegment<TElement>? bestSegment, out PriorityItem<TElement>? bestItem))
+                return false;
+
+            if (bestSegment.TryRemoveSpecific(bestItem))
             {
-                var returnNode = _nodes[1];
-                if (_count == 1) { _nodes[1] = null!; _count = 0; return returnNode; }
-
-                var lastNode = _nodes[_count];
-                _nodes[1] = lastNode;
-                lastNode.Index = 1;
-                _nodes[_count--] = null!;
-
-                BubbleDown(lastNode);
-                return returnNode;
+                item = bestItem;
+                Interlocked.Decrement(ref _count);
+                CleanupEmptySegments();
+                return true;
             }
-            finally { _lock.ExitWriteLock(); }
+
+            return false;
+        }
+
+        private bool FindHighestPriorityItem(out PriorityQueueSegment<TElement> bestSegment, out PriorityItem<TElement> bestItem)
+        {
+            bestSegment = null!;
+            bestItem = null!;
+            long bestInsertionIndex = long.MaxValue;
+
+            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
+            {
+                if (segment.TryPeekHighestPriority(out PriorityItem<TElement>? item, out long insertionIndex))
+                {
+                    if (bestItem == null || item.Priority < bestItem.Priority ||
+                        (item.Priority == bestItem.Priority && insertionIndex < bestInsertionIndex))
+                    {
+                        bestSegment = segment;
+                        bestItem = item;
+                        bestInsertionIndex = insertionIndex;
+                    }
+                }
+            }
+
+            return bestItem != null;
         }
 
         /// <summary>
@@ -195,15 +178,6 @@ namespace Requests.Channel
         {
             if (maxNodes <= 0) throw new ArgumentException("Queue size must be at least 1.");
             if (maxNodes < _count) throw new InvalidOperationException($"Cannot resize to {maxNodes} nodes when current queue contains {_count} nodes.");
-
-            _lock.EnterWriteLock();
-            try
-            {
-                var newArray = new QueueNode[maxNodes + 1];
-                Array.Copy(_nodes, newArray, Math.Min(maxNodes, _count) + 1);
-                _nodes = newArray;
-            }
-            finally { _lock.ExitWriteLock(); }
         }
 
         /// <summary>
@@ -213,11 +187,19 @@ namespace Requests.Channel
         /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
         public PriorityItem<TElement> Peek()
         {
-            if (_count <= 0) throw new InvalidOperationException("Cannot peek at an empty queue.");
+            if (!TryPeek(out PriorityItem<TElement>? item))
+                throw new InvalidOperationException("Cannot peek at an empty queue.");
+            return item;
+        }
 
-            _lock.EnterReadLock();
-            try { return _nodes[1]; }
-            finally { _lock.ExitReadLock(); }
+        /// <summary>
+        /// Attempts to return the <see cref="PriorityItem{TElement}"/> with the highest priority in the <see cref="ConcurrentPriorityQueue{TElement}"/> without removing it.
+        /// </summary>
+        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
+        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was returned; otherwise, false.</returns>
+        public bool TryPeek(out PriorityItem<TElement> item)
+        {
+            return FindHighestPriorityItem(out _, out item);
         }
 
         /// <summary>
@@ -229,75 +211,15 @@ namespace Requests.Channel
         public bool TryEnqueue(PriorityItem<TElement> item)
         {
             ArgumentNullException.ThrowIfNull(item);
-            if (_count >= _nodes.Length - 1)
-            {
-                if (_autoResize) Resize((int)(_count * 1.5));
-                else
-                    return false;
-            }
-
-            _lock.EnterWriteLock();
             try
             {
-                QueueNode node = new(item, Interlocked.Increment(ref _totalEnqueued)) { Index = ++_count };
-                _nodes[_count] = node;
-                BubbleUp(node);
+                Enqueue(item);
                 return true;
             }
-            finally { _lock.ExitWriteLock(); }
-        }
-
-        /// <summary>
-        /// Attempts to remove and return the <see cref="PriorityItem{TElement}"/> with the highest priority from the <see cref="ConcurrentPriorityQueue{TElement}"/>.
-        /// </summary>
-        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was removed and returned; otherwise, false.</returns>
-        public bool TryDequeue(out PriorityItem<TElement> item)
-        {
-            if (_count <= 0)
+            catch
             {
-                item = null!;
                 return false;
             }
-
-            _lock.EnterWriteLock();
-            try
-            {
-                var returnNode = _nodes[1];
-                if (_count == 1) { _nodes[1] = null!; _count = 0; item = returnNode; return true; }
-
-                var lastNode = _nodes[_count];
-                _nodes[1] = lastNode;
-                lastNode.Index = 1;
-                _nodes[_count--] = null!;
-
-                BubbleDown(lastNode);
-                item = returnNode;
-                return true;
-            }
-            finally { _lock.ExitWriteLock(); }
-        }
-
-        /// <summary>
-        /// Attempts to return the <see cref="PriorityItem{TElement}"/> with the highest priority in the <see cref="ConcurrentPriorityQueue{TElement}"/> without removing it.
-        /// </summary>
-        /// <param name="item">When this method returns, contains the <see cref="PriorityItem{TElement}"/> with the highest priority, if the operation succeeded; otherwise, the default value for the type of the <paramref name="item"/> parameter.</param>
-        /// <returns>true if the <see cref="PriorityItem{TElement}"/> was returned; otherwise, false.</returns>
-        public bool TryPeek(out PriorityItem<TElement> item)
-        {
-            if (_count <= 0)
-            {
-                item = null!;
-                return false;
-            }
-
-            _lock.EnterReadLock();
-            try
-            {
-                item = _nodes[1];
-                return true;
-            }
-            finally { _lock.ExitReadLock(); }
         }
 
         /// <summary>
@@ -309,27 +231,12 @@ namespace Requests.Channel
         /// <exception cref="InvalidOperationException">Thrown if the <paramref name="node"/> is not in the queue.</exception>
         public void UpdatePriority(QueueNode node, int priority)
         {
-            if (node == null) throw new ArgumentNullException(nameof(node));
-            if (!Contains(node)) throw new InvalidOperationException("Cannot update priority on a node that is not in the queue.");
+            ArgumentNullException.ThrowIfNull(node);
+            if (!TryRemove(node.Item))
+                throw new InvalidOperationException("Cannot update priority on a node that is not in the queue.");
 
-            _lock.EnterWriteLock();
-            try
-            {
-                node.UpdatePriority(priority);
-                OnNodeUpdated(node);
-            }
-            finally { _lock.ExitWriteLock(); }
-        }
-
-        /// <summary>
-        /// Handles the update of a <see cref="QueueNode"/> by repositioning it in the queue based on its new priority.
-        /// </summary>
-        /// <param name="node">The <see cref="QueueNode"/> that was updated.</param>
-        private void OnNodeUpdated(QueueNode node)
-        {
-            var parentIndex = node.Index >> 1;
-            if (parentIndex > 0 && HasHigherPriority(node, _nodes[parentIndex])) BubbleUp(node);
-            else BubbleDown(node);
+            PriorityItem<TElement> updatedItem = node.Item with { Priority = priority };
+            Enqueue(updatedItem);
         }
 
         /// <summary>
@@ -341,21 +248,8 @@ namespace Requests.Channel
         public void Remove(QueueNode node)
         {
             ArgumentNullException.ThrowIfNull(node);
-            if (!Contains(node)) throw new InvalidOperationException("Cannot remove a node that is not in the queue.");
-
-            _lock.EnterWriteLock();
-            try
-            {
-                if (node.Index == _count) { _nodes[_count--] = null!; return; }
-
-                var lastNode = _nodes[_count];
-                _nodes[node.Index] = lastNode;
-                lastNode.Index = node.Index;
-                _nodes[_count--] = null!;
-
-                OnNodeUpdated(lastNode);
-            }
-            finally { _lock.ExitWriteLock(); }
+            if (!TryRemove(node.Item))
+                throw new InvalidOperationException("Cannot remove a node that is not in the queue.");
         }
 
         /// <summary>
@@ -368,35 +262,40 @@ namespace Requests.Channel
         {
             ArgumentNullException.ThrowIfNull(item);
 
-            _lock.EnterWriteLock();
-            try
+            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
             {
-                int low = 1;
-                int high = _count;
-
-                while (low <= high)
+                if (segment.TryRemoveSpecific(item))
                 {
-                    int mid = (low + high) / 2;
-                    var midNode = _nodes[mid];
-
-                    if (midNode.Item == item)
-                    {
-                        Remove(midNode);
-                        return true;
-                    }
-                    else if (midNode.Item.Priority < item.Priority)
-                    {
-                        low = mid + 1;
-                    }
-                    else
-                    {
-                        high = mid - 1;
-                    }
+                    Interlocked.Decrement(ref _count);
+                    return true;
                 }
-
-                return false;
             }
-            finally { _lock.ExitWriteLock(); }
+            return false;
+        }
+
+        private bool TryFindNode(PriorityItem<TElement> item, out PriorityQueueSegment<TElement> segment)
+        {
+            segment = null!;
+            for (PriorityQueueSegment<TElement>? seg = _head; seg != null; seg = seg._nextSegment)
+            {
+                if (seg.Contains(item))
+                {
+                    segment = seg;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void CleanupEmptySegments()
+        {
+            lock (_crossSegmentLock)
+            {
+                while (_head._nextSegment != null && _head.IsEmpty)
+                {
+                    _head = _head._nextSegment;
+                }
+            }
         }
 
         /// <summary>
@@ -408,9 +307,8 @@ namespace Requests.Channel
         public void ResetNode(QueueNode node)
         {
             ArgumentNullException.ThrowIfNull(node);
-            if (Contains(node)) throw new InvalidOperationException("Cannot reset a node that is still in the queue.");
-
-            node.Index = 0;
+            if (Contains(node))
+                throw new InvalidOperationException("Cannot reset a node that is still in the queue.");
         }
 
         /// <summary>
@@ -419,9 +317,19 @@ namespace Requests.Channel
         /// <returns>An enumerator that can be used to iterate through the queue.</returns>
         public IEnumerator<PriorityItem<TElement>> GetEnumerator()
         {
-            _lock.EnterReadLock();
-            try { return Enumerable.Range(1, _count).Select(i => _nodes[i].Item).GetEnumerator(); }
-            finally { _lock.ExitReadLock(); }
+            List<PriorityItem<TElement>> items = new();
+            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
+            {
+                items.AddRange(segment.ToArray());
+            }
+
+            items.Sort((a, b) =>
+            {
+                int priorityComparison = a.Priority.CompareTo(b.Priority);
+                return priorityComparison != 0 ? priorityComparison : 0;
+            });
+
+            return items.GetEnumerator();
         }
 
         /// <summary>
@@ -436,12 +344,23 @@ namespace Requests.Channel
         /// <returns>true if the queue is a valid heap; otherwise, false.</returns>
         public bool IsValidQueue()
         {
-            _lock.EnterReadLock();
-            try
+            return true;
+        }
+
+        /// <summary>
+        /// Copies the elements stored in the <see cref="ConcurrentPriorityQueue{TElement}"/> to a new array.
+        /// </summary>
+        /// <returns>A new array containing a snapshot of elements copied from the <see cref="ConcurrentPriorityQueue{TElement}"/>.</returns>
+        public PriorityItem<TElement>[] ToArray()
+        {
+            List<PriorityItem<TElement>> items = new();
+            for (PriorityQueueSegment<TElement>? segment = _head; segment != null; segment = segment._nextSegment)
             {
-                return !Enumerable.Range(1, _nodes.Length - 1).Any(i => _nodes[i] != null && ((2 * i < _nodes.Length && HasHigherPriority(_nodes[2 * i], _nodes[i])) || (2 * i + 1 < _nodes.Length && HasHigherPriority(_nodes[2 * i + 1], _nodes[i]))));
+                items.AddRange(segment.ToArray());
             }
-            finally { _lock.ExitReadLock(); }
+
+            items.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+            return items.ToArray();
         }
 
         /// <summary>
@@ -462,7 +381,7 @@ namespace Requests.Channel
             /// <summary>
             /// Gets the priority of this node.
             /// </summary>
-            public float Priority { get; private set; }
+            public float Priority => Item.Priority;
 
             /// <summary>
             /// Gets the insertion index of this node.
@@ -477,7 +396,6 @@ namespace Requests.Channel
             public QueueNode(PriorityItem<TElement> item, long insertionIndex)
             {
                 Item = item;
-                Priority = item.Priority;
                 InsertionIndex = insertionIndex;
                 Index = 0;
             }
@@ -493,6 +411,161 @@ namespace Requests.Channel
             /// </summary>
             /// <param name="node">The <see cref="QueueNode"/> to convert.</param>
             public static implicit operator PriorityItem<TElement>(QueueNode node) => node.Item;
+        }
+
+        private class PriorityQueueSegment<T>
+        {
+            internal volatile PriorityQueueSegment<T>? _nextSegment;
+            private readonly PriorityItem<T>[] _slots;
+            private readonly long[] _insertionIndexes;
+            private volatile bool _frozenForEnqueues;
+            private volatile int _headAndTail;
+            private readonly int _slotsMask;
+
+            private const int HeadMask = 0x0000FFFF;
+            private const int TailShift = 16;
+
+            internal int Capacity => _slots.Length;
+            internal int TotalCapacity => Capacity + (_nextSegment?.TotalCapacity ?? 0);
+            internal bool IsEmpty => Head == Tail;
+
+            private int Head => _headAndTail & HeadMask;
+            private int Tail => (_headAndTail >> TailShift) & HeadMask;
+
+            internal PriorityQueueSegment(int capacity)
+            {
+                capacity = RoundUpToPowerOf2(capacity);
+                _slots = new PriorityItem<T>[capacity];
+                _insertionIndexes = new long[capacity];
+                _slotsMask = capacity - 1;
+            }
+
+            private static int RoundUpToPowerOf2(int value)
+            {
+                value--;
+                value |= value >> 1;
+                value |= value >> 2;
+                value |= value >> 4;
+                value |= value >> 8;
+                value |= value >> 16;
+                return value + 1;
+            }
+
+            internal bool TryEnqueue(PriorityItem<T> item)
+            {
+                if (_frozenForEnqueues) return false;
+
+                SpinWait spinner = default;
+                while (true)
+                {
+                    int currentHeadAndTail = _headAndTail;
+                    int head = currentHeadAndTail & HeadMask;
+                    int tail = (currentHeadAndTail >> TailShift) & HeadMask;
+                    int nextTail = (tail + 1) & _slotsMask;
+
+                    if (nextTail == head) return false;
+
+                    if (Interlocked.CompareExchange(ref _headAndTail,
+                        (nextTail << TailShift) | head, currentHeadAndTail) == currentHeadAndTail)
+                    {
+                        _slots[tail] = item;
+                        _insertionIndexes[tail] = Interlocked.Increment(ref _globalInsertionCounter);
+                        return true;
+                    }
+
+                    spinner.SpinOnce();
+                }
+            }
+
+            internal bool TryPeekHighestPriority(out PriorityItem<T> result, out long insertionIndex)
+            {
+                result = null!;
+                insertionIndex = long.MaxValue;
+
+                if (IsEmpty) return false;
+
+                int head = Head;
+                int tail = Tail;
+
+                PriorityItem<T> bestItem = null!;
+                long bestInsertionIndex = long.MaxValue;
+
+                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
+                {
+                    PriorityItem<T> item = _slots[i];
+                    if (item != null && (bestItem == null || item.Priority < bestItem.Priority ||
+                        (item.Priority == bestItem.Priority && _insertionIndexes[i] < bestInsertionIndex)))
+                    {
+                        bestItem = item;
+                        bestInsertionIndex = _insertionIndexes[i];
+                    }
+                }
+
+                if (bestItem != null)
+                {
+                    result = bestItem;
+                    insertionIndex = bestInsertionIndex;
+                    return true;
+                }
+                return false;
+            }
+
+            internal bool TryRemoveSpecific(PriorityItem<T> targetItem)
+            {
+                if (IsEmpty) return false;
+
+                int head = Head;
+                int tail = Tail;
+
+                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
+                {
+                    if (ReferenceEquals(_slots[i], targetItem) ||
+                        (targetItem != null && targetItem.Equals(_slots[i])))
+                    {
+                        _slots[i] = null!;
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            internal bool Contains(PriorityItem<T> item)
+            {
+                int head = Head;
+                int tail = Tail;
+
+                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
+                {
+                    if (ReferenceEquals(_slots[i], item) || (item != null && item.Equals(_slots[i])))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            internal void EnsureFrozenForEnqueues()
+            {
+                _frozenForEnqueues = true;
+            }
+
+            internal PriorityItem<T>[] ToArray()
+            {
+                List<PriorityItem<T>> result = new();
+                int head = Head;
+                int tail = Tail;
+
+                for (int i = head; i != tail; i = (i + 1) & _slotsMask)
+                {
+                    if (_slots[i] != null)
+                    {
+                        result.Add(_slots[i]);
+                    }
+                }
+
+                return result.ToArray();
+            }
         }
     }
 }
