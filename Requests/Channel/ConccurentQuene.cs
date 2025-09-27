@@ -432,7 +432,7 @@ namespace Requests.Channel
                         tail.EnsureFrozenForEnqueues();
 
                         int nextSize = tail._preservedForObservation ? InitialSegmentLength : Math.Min(tail.Capacity * 2, MaxSegmentLength);
-                        var newTail = new ConcurrentQueueSegment(nextSize);
+                        ConcurrentQueueSegment newTail = new(nextSize);
 
                         tail._nextSegment = newTail;
                         _tail = newTail;
@@ -594,23 +594,30 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Attempts to remove a specific item from the <see cref="ConcurrentQueue{T}"/>.
+        /// Attempts to remove a specific item from the queue.
         /// </summary>
-        /// <param name="item">The item to remove from the <see cref="ConcurrentQueue{T}"/>.</param>
-        /// <returns>true if the item was successfully removed; otherwise, false.</returns>
+        /// <param name="item">The item to remove.</param>
+        /// <returns>true if the item was found and removed; otherwise, false.</returns>
         public bool TryRemove(T item)
         {
-            lock (_crossSegmentLock)
+            ConcurrentQueueSegment tail = _tail;
+
+            if (tail.TryRemoveItem(item))
+                return true;
+
+            ConcurrentQueueSegment? current = tail;
+            while (current != null && current != _head)
             {
-                ConcurrentQueueSegment? currentSegment = _head;
-                while (currentSegment != null)
-                {
-                    if (currentSegment.Remove(item))
-                        return true;
-                    currentSegment = currentSegment._nextSegment;
-                }
+                ConcurrentQueueSegment? prev = _head;
+                while (prev != null && prev._nextSegment != current)
+                    prev = prev._nextSegment;
+
+                if (prev != null && prev.TryRemoveItem(item))
+                    return true;
+
+                current = prev;
             }
-            return false;
+            return _head.TryRemoveItem(item);
         }
 
         /// <summary>
@@ -632,6 +639,9 @@ namespace Requests.Channel
             internal bool _preservedForObservation;
             internal bool _frozenForEnqueues;
             internal ConcurrentQueueSegment? _nextSegment;
+
+            // Flag to mark removed items in sequence number
+            private const int REMOVED_FLAG = unchecked((int)0x80000000);
 
             /// <summary>
             /// Initializes a new instance of the <see cref="ConcurrentQueueSegment"/> class with the specified bounded length.
@@ -673,67 +683,35 @@ namespace Requests.Channel
                 }
             }
 
-            /// <summary>
-            /// Attempts to remove a specific item from the segment.
-            /// </summary>
-            /// <param name="item">The item to remove from the segment.</param>
-            /// <returns>true if the item was successfully removed; otherwise, false.</returns>
-            public bool Remove(T item)
+            public bool TryRemoveItem(T item)
             {
                 Slot[] slots = _slots;
+                int head = Volatile.Read(ref _headAndTail.Head);
+                int tail = Volatile.Read(ref _headAndTail.Tail);
 
-                SpinWait spinner = default;
-                while (true)
+                for (int i = tail - 1; i >= head; i--)
                 {
-                    int currentHead = Volatile.Read(ref _headAndTail.Head);
-                    int currentTail = Volatile.Read(ref _headAndTail.Tail);
+                    int slotsIndex = i & _slotsMask;
+                    int currentSeq = Volatile.Read(ref slots[slotsIndex].SequenceNumber);
 
-                    for (int i = currentHead; i < currentTail; i++)
+                    if (currentSeq == i + 1 && (currentSeq & REMOVED_FLAG) == 0)
                     {
-                        int slotsIndex = i & _slotsMask;
-                        int sequenceNumber = Volatile.Read(ref slots[slotsIndex].SequenceNumber);
-
-                        if (sequenceNumber == i + 1 && EqualityComparer<T>.Default.Equals(slots[slotsIndex].Item, item))
+                        T? currentItem = slots[slotsIndex].Item;
+                        if (EqualityComparer<T>.Default.Equals(currentItem, item))
                         {
-                            if (Interlocked.CompareExchange(ref slots[slotsIndex].SequenceNumber, i + slots.Length, i + 1) == i + 1)
+                            int removedSeq = currentSeq | REMOVED_FLAG;
+                            if (Interlocked.CompareExchange(ref slots[slotsIndex].SequenceNumber, removedSeq, currentSeq) == currentSeq)
                             {
-                                // Item found and marked for removal
-                                // Adjust the tail to skip the removed item
-                                Interlocked.CompareExchange(ref _headAndTail.Tail, currentTail - 1, currentTail);
-
-                                // Shift the remaining items to fill the gap
-                                for (int j = slotsIndex; j < currentTail - 1; j++)
-                                {
-                                    int nextIndex = (j + 1) & _slotsMask;
-                                    slots[j].Item = slots[nextIndex].Item;
-                                    slots[j].SequenceNumber = j + 1;
-                                }
-
-                                // Clear the last slot
-                                int lastIndex = (currentTail - 1) & _slotsMask;
-                                slots[lastIndex].Item = default;
-                                slots[lastIndex].SequenceNumber = currentTail;
-
+                                slots[slotsIndex].Item = default;
                                 return true;
                             }
                         }
                     }
-
-                    // Item not found or not ready for removal
-                    if (currentTail == Volatile.Read(ref _headAndTail.Tail))
-                    {
-                        return false;
-                    }
-
-                    spinner.SpinOnce(sleep1Threshold: -1);
                 }
+
+                return false;
             }
 
-            /// <summary>
-            /// Attempts to remove and return an item from the beginning of the segment.
-            /// </summary>
-            /// <param name="item">When this method returns, if the operation was successful, <paramref name="item"/> contains the removed item. If no item was available to be removed, the value is unspecified.</param>
-            /// <returns>true if an element was removed and returned from the beginning of the segment successfully; otherwise, false.</returns>
             public bool TryDequeue([MaybeNullWhen(false)] out T item)
             {
                 Slot[] slots = _slots;
@@ -745,6 +723,19 @@ namespace Requests.Channel
                     int slotsIndex = currentHead & _slotsMask;
 
                     int sequenceNumber = Volatile.Read(ref slots[slotsIndex].SequenceNumber);
+
+                    if ((sequenceNumber & REMOVED_FLAG) != 0)
+                    {
+                        if (Interlocked.CompareExchange(ref _headAndTail.Head, currentHead + 1, currentHead) == currentHead)
+                        {
+                            if (!Volatile.Read(ref _preservedForObservation))
+                            {
+                                slots[slotsIndex].Item = default;
+                                Volatile.Write(ref slots[slotsIndex].SequenceNumber, currentHead + slots.Length);
+                            }
+                        }
+                        continue;
+                    }
 
                     int diff = sequenceNumber - (currentHead + 1);
                     if (diff == 0)
