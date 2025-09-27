@@ -38,6 +38,11 @@ namespace UnitTest
             }
 
             public Task StartRequestAsync() => Task.CompletedTask;
+
+            public bool HasCompleted()
+            {
+                throw new NotImplementedException();
+            }
         }
 
         [TestMethod]

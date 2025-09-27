@@ -1,41 +1,41 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <Title>Shard.Requests</Title>
-    <GenerateDocumentationFile>True</GenerateDocumentationFile>
-    <Authors>Meyn</Authors>
-    <Company>Shard</Company>
-    <Description>A C# .NET 6 library for parallel async request handling. Features include priority settings, retry functions, and expandable classes, making it ideal for HTTP requests and CPU-intensive tasks.</Description>
-    <Copyright>Shard © 2024</Copyright>
-    <PackageProjectUrl></PackageProjectUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <RepositoryType>git</RepositoryType>
-    <PackageTags>async; channel; priority; request; parallel; </PackageTags>
-    <RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
-    <PackageIcon>logo.png</PackageIcon>
-    <Version>2.2.1</Version>
-    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
-    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <PackageId>Shard.Requests</PackageId>
-    <PackageReleaseNotes>Implement support for overwriting SubsequentRequest property in the Request&lt;&gt; class</PackageReleaseNotes>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFrameworks>net6.0;net9.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Title>Shard.Requests</Title>
+		<GenerateDocumentationFile>True</GenerateDocumentationFile>
+		<Authors>Meyn</Authors>
+		<Company>Shard</Company>
+		<Description>A C# .NET 6 library for parallel async request handling. Features include priority settings, retry functions, and expandable classes, making it ideal for HTTP requests and CPU-intensive tasks.</Description>
+		<Copyright>Shard © 2025</Copyright>
+		<PackageProjectUrl></PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>async; channel; priority; request; parallel; </PackageTags>
+		<RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
+		<PackageIcon>logo.png</PackageIcon>
+		<Version>2.2.1</Version>
+		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+		<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+		<PackageId>Shard.Requests</PackageId>
+		<PackageReleaseNotes>Implement support for overwriting SubsequentRequest property in the Request&lt;&gt; class</PackageReleaseNotes>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <None Include="..\LICENSE.txt">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\logo.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\README.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-  </ItemGroup>
+	<ItemGroup>
+		<None Include="..\LICENSE.txt">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+		<None Include="..\logo.png">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+		<None Include="..\README.md">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+	</ItemGroup>
 
 </Project>
