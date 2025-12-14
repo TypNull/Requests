@@ -1,91 +1,64 @@
-﻿using Requests.Options;
+using Requests.Options;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace Requests
 {
-
     /// <summary>
-    /// Represents a <see cref="Request{TOptions, TCompleated, TFailed}"/> object that can be managed by the <see cref="RequestHandler"/>.
+    /// Base class for requests that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
     /// <typeparam name="TOptions">The type of options.</typeparam>
-    /// <typeparam name="TCompleated">The type of completed return.</typeparam>
+    /// <typeparam name="TCompleted">The type of completed return.</typeparam>
     /// <typeparam name="TFailed">The type of failed return.</typeparam>
-    public abstract class Request<TOptions, TCompleated, TFailed> : IRequest where TOptions : RequestOptions<TCompleated, TFailed>, new()
+    public abstract class Request<TOptions, TCompleted, TFailed> : IRequest
+        where TOptions : RequestOptions<TCompleted, TFailed>, new()
     {
-        /// <summary>
-        /// Indicates whether this object has been disposed of.
-        /// </summary>
         private bool _disposed;
-
-        /// <summary>
-        /// Keeps track of how many times this <see cref="Request{TOptions, TCompleated, TFailed}"/> failed.
-        /// </summary>
-        public virtual int AttemptCounter { get; private set; }
-
-        /// <summary>
-        /// The <see cref="CancellationTokenSource"/> associated with this object.
-        /// </summary>
-        private CancellationTokenSource _cts;
-
-        /// <summary>
-        /// The <see cref="CancellationTokenRegistration"/> associated with this object.
-        /// </summary>
+        private RequestState _state = RequestState.Paused;
+        private readonly TaskCompletionSource _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _runningCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly List<Exception> _exceptions = [];
+        private readonly SemaphoreSlim _pauseSemaphore = new(0, 1); // Starts locked
+        private CancellationTokenSource _requestCts = null!; // Initialized in constructor
         private CancellationTokenRegistration _ctr;
 
         /// <summary>
-        /// The synchronization context captured upon construction. This will never be null.
+        /// The synchronization context captured upon construction for marshaling callbacks.
         /// </summary>
         protected SynchronizationContext SynchronizationContext { get; }
 
         /// <summary>
-        /// The current state of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
+        /// The options that started this request (immutable).
         /// </summary>
-        private RequestState _state = RequestState.Paused;
+        public TOptions StartOptions { get; }
 
         /// <summary>
-        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> that initiated this request.
-        /// </summary>
-        private readonly TOptions _startOptions;
-
-        /// <summary>
-        /// A <see cref="System.Threading.Tasks.Task"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> has finished.
-        /// </summary>
-        private readonly TaskCompletionSource _isFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        /// <summary>
-        /// A list of all collected exceptions during the request.
-        /// </summary>
-        private readonly List<Exception> _exceptions = new();
-
-        /// <summary>
-        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> associated with this object.
+        /// The current options for this request (mutable).
         /// </summary>
         protected TOptions Options { get; set; }
 
         /// <summary>
-        /// The <see cref="RequestOptions{TCompleated, TFailed}"/> that started this request.
+        /// Number of times this request has been attempted.
         /// </summary>
-        public TOptions StartOptions => _startOptions;
+        public virtual int AttemptCounter { get; private set; }
 
         /// <summary>
-        /// A <see cref="CancellationToken"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> was cancelled.
+        /// Cancellation token for this request.
         /// </summary>
-        protected CancellationToken Token => _cts.Token;
+        protected CancellationToken Token => _requestCts.Token;
 
         /// <summary>
-        /// A <see cref="System.Threading.Tasks.Task"/> that indicates whether this <see cref="Request{TOptions, TCompleated, TFailed}"/> has finished.
+        /// Task that completes when the request reaches a final state.
         /// </summary>
-        public virtual Task Task => _isFinished.Task;
+        public virtual Task Task => _completionSource.Task;
 
         /// <summary>
-        /// An <see cref="AggregateException"/> that contains any thrown exceptions.
+        /// Aggregate exception containing all errors that occurred during execution.
         /// </summary>
-        public virtual AggregateException? Exception { private set; get; }
+        public virtual AggregateException? Exception { get; private set; }
 
         /// <summary>
-        /// Delays the start of the <see cref="Request{TOptions, TCompleated, TFailed}"/> on every Start call for the specified number of milliseconds. <br/>
-        /// This property can not be set while initialization.
+        /// Deployment delay before the request starts execution.
         /// </summary>
         public TimeSpan? DeployDelay
         {
@@ -94,26 +67,37 @@ namespace Requests
         }
 
         /// <summary>
-        /// The current state of this <see cref="Request{TOptions, TCompleated, TFailed}"/>.
+        /// Current state of the request.
         /// </summary>
         public virtual RequestState State
         {
-            get => _state; protected set
+            get => _state;
+            protected set
             {
                 if (HasCompleted())
                     return;
+
+                RequestState oldState = _state;
                 _state = value;
-                SynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
+
+                // Complete running task if we're no longer running
+                if (oldState == RequestState.Running && value != RequestState.Running)
+                {
+                    _runningCompletionSource.TrySetResult();
+                }
+
+                // Marshal state change to original context
+                SynchronizationContext.Post(_ => StateChanged?.Invoke(this, value), null);
             }
         }
 
         /// <summary>
-        /// Event that is invoked when the <see cref="State"/> of this object changes.
+        /// Event raised when the request state changes.
         /// </summary>
         public event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
-        /// Gets the priority of the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
+        /// Priority of this request.
         /// </summary>
         public virtual RequestPriority Priority => Options.Priority;
 
@@ -121,300 +105,453 @@ namespace Requests
         IRequest? IRequest.SubsequentRequest => Options.SubsequentRequest;
 
         /// <summary>
-        /// Constructor for the <see cref="Request{TOptions, TCompleted, TFailed}"/> class.
+        /// Initializes a new request with the specified options.
         /// </summary>
-        /// <param name="options">Options to modify the <see cref="Request{TOptions, TCompleted, TFailed}"/>.</param>
         protected Request(TOptions? options = null)
         {
-            _startOptions = options ?? new();
-            Options = _startOptions with { };
+            StartOptions = options ?? new();
+            Options = StartOptions with { };
             SynchronizationContext = SynchronizationContext.Current ?? Options.Handler.DefaultSynchronizationContext;
-            RegisterNewCTS();
+
+            _requestCts = CreateCancellationTokenSource();
+            _ctr = RegisterCancellation();
         }
 
         /// <summary>
-        /// Releases all resources associated with <see cref="_ctr"/> and <see cref="_cts"/> and sets them anew.
+        /// Creates a cancellation token source linked to handler and optional request token.
         /// </summary>
-        [MemberNotNull(nameof(_cts))]
-        private void RegisterNewCTS()
+        private CancellationTokenSource CreateCancellationTokenSource() => Options.CancellationToken.HasValue
+                ? CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken, Options.CancellationToken.Value)
+                : CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken);
+
+        /// <summary>
+        /// Registers cancellation callback.
+        /// </summary>
+        private CancellationTokenRegistration RegisterCancellation() => Token.UnsafeRegister(state =>
         {
-            _cts?.Dispose();
-            _ctr.Unregister();
-            _cts = CreateNewCTS();
-            _ctr = Token.Register(() => { Cancel(); SynchronizationContext.Post((o) => Options.RequestCancelled?.Invoke((IRequest)o!), this); });
-        }
+            Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
+            request.HandleCancellation();
+        }, this);
 
         /// <summary>
-        /// Creates a new linked cancellation token source.
+        /// Handles cancellation based on the source.
         /// </summary>
-        /// <returns>A new <see cref="CancellationTokenSource"/>.</returns>
-        private CancellationTokenSource CreateNewCTS()
+        private void HandleCancellation()
         {
-            if (Options.CancellationToken.HasValue)
-                return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken, Options.CancellationToken.Value);
-            return CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken);
+            // If request's own token was cancelled, cancel permanently
+            if (Options.CancellationToken?.IsCancellationRequested == true)
+            {
+                Cancel();
+                return;
+            }
+
+            // If handler token was cancelled, pause and wait for handler to resume
+            if (Options.Handler.CancellationToken.IsCancellationRequested && State == RequestState.Running)
+            {
+                Pause();
+            }
         }
 
         /// <summary>
-        /// Cancels the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
+        /// Cancels the request permanently. This action is irreversible.
         /// </summary>
-        /// <exception cref="AggregateException"></exception>
-        /// <exception cref="ObjectDisposedException"></exception>
-        /// <exception cref="InvalidOperationException"></exception>
         public virtual void Cancel()
         {
             if (State == RequestState.Cancelled)
                 return;
+
             State = RequestState.Cancelled;
+
+            // Release pause semaphore to prevent deadlock
+            if (_pauseSemaphore.CurrentCount == 0)
+                _pauseSemaphore.Release();
+
             if (!_disposed)
-                _cts.Cancel();
-            _isFinished.TrySetCanceled();
+                _requestCts.Cancel();
+
+            _completionSource.TrySetCanceled();
+            _runningCompletionSource.TrySetCanceled();
+
+            // Marshal callback to original context
+            SynchronizationContext.Post(_ => Options.RequestCancelled?.Invoke(this), null);
+
             Options.SubsequentRequest?.Cancel();
         }
 
         /// <summary>
-        /// Waits for this <see cref="IRequest"/> to finish.
-        /// </summary>
-        /// <exception cref="AggregateException"></exception>
-        /// <exception cref="ObjectDisposedException"></exception>
-        public virtual void Wait() => Task.Wait();
-
-        /// <summary>
-        /// Disposes the <see cref="Request{TOptions, TCompleted, TFailed}"/>.
-        /// This method is automatically called by the <see cref="RequestHandler"/>.
-        /// </summary>
-        /// <exception cref="AggregateException"></exception>
-        /// <exception cref="ArgumentException"></exception>
-        /// <exception cref="ObjectDisposedException"></exception>
-        /// <exception cref="InvalidOperationException"></exception>
-        public virtual void Dispose()
-        {
-            if (!HasCompleted())
-                Cancel();
-            if (_disposed)
-                return;
-            _disposed = true;
-
-            _cts?.Dispose();
-            _ctr.Unregister();
-            _isFinished.TrySetCanceled();
-            GC.SuppressFinalize(this);
-        }
-
-        /// <summary>
-        /// If AutoStart is set, starts the request.
-        /// </summary>
-        protected void AutoStart()
-        {
-            if (Options.AutoStart) Start();
-        }
-
-        /// <summary>
-        /// Executes the request that was instantiated from this class.
-        /// </summary>
-        async Task IRequest.StartRequestAsync()
-        {
-            if (State != RequestState.Idle || Options.Handler.CancellationToken.IsCancellationRequested || Options.CancellationToken?.IsCancellationRequested == true)
-                return;
-            State = RequestState.Running;
-
-            if (_cts.IsCancellationRequested)
-                RegisterNewCTS();
-
-            SynchronizationContext.Post((o) => Options.RequestStarted?.Invoke((IRequest)o!), this);
-
-            RequestReturn returnItem = await TryRunRequestAsync();
-            SetResult(returnItem);
-        }
-
-        private async Task<RequestReturn> TryRunRequestAsync()
-        {
-            RequestReturn returnItem = new();
-            try
-            {
-                returnItem = await RunRequestAsync();
-            }
-            catch (Exception ex)
-            {
-                AddException(ex);
-                Debug.WriteLine($"Request exception on attempt {AttemptCounter + 1}: {ex.Message}");
-            }
-            return returnItem;
-        }
-
-        /// <summary>
-        /// Evaluates the result of the <see cref="Request{TOptions, TCompleated, TFailed}"/> and manages the outcome if it's not successful.
-        /// </summary>
-        /// <param name="returnItem"> object that indicates the success of the <see cref="Request{TOptions, TCompleated, TFailed}"/></param>
-        private void SetResult(RequestReturn returnItem)
-        {
-            EvalueateRequest(returnItem);
-            SetTaskState();
-        }
-
-        private void EvalueateRequest(RequestReturn returnItem)
-        {
-            if (State != RequestState.Running)
-                return;
-            if (!returnItem.Successful)
-            {
-                AttemptCounter++;
-                if (Token.IsCancellationRequested || AttemptCounter < Options.NumberOfAttempts)
-                {
-                    if (Options.CancellationToken?.IsCancellationRequested == true)
-                        State = RequestState.Cancelled;
-                    else if (Options.DelayBetweenAttemps.HasValue)
-                        _ = WaitAndDeploy(Options.DelayBetweenAttemps.Value);
-                    else
-                        State = RequestState.Idle;
-                    return;
-                }
-                State = RequestState.Failed;
-                SynchronizationContext.Post((o) => Options.RequestFailed?.Invoke((IRequest)o!, returnItem.FailedReturn), this);
-                return;
-            }
-            State = RequestState.Completed;
-            SynchronizationContext.Post((o) => Options.RequestCompleted?.Invoke((IRequest)o!, returnItem.CompletedReturn), this);
-        }
-
-
-        /// <summary>
-        /// Updates the Task's status based on the current state of the <see cref="Request{TOptions, TCompleated, TFailed}"/>.
-        /// </summary>
-        protected void SetTaskState()
-        {
-            switch (State)
-            {
-                case RequestState.Completed:
-                case RequestState.Failed:
-                    _isFinished.TrySetResult();
-                    break;
-                case RequestState.Cancelled:
-                    _isFinished.TrySetCanceled();
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Appends an <see cref="System.Exception"/> to the <see cref="AggregateException"/> trace.
-        /// </summary>
-        protected void AddException(Exception exception)
-        {
-            _exceptions.Add(exception);
-            Exception = new AggregateException(_exceptions);
-            SynchronizationContext.Post((o) => Options.RequestExceptionOccurred?.Invoke((IRequest)o!, exception), this);
-        }
-
-        /// <summary>
-        /// Contains the execution of the <see cref="Request{TOptions, TCompleated, TFailed}"/> implementation.
-        /// </summary>
-        /// <returns>A <see cref="RequestReturn"/> object that indicates the success of the <see cref="Request{TOptions, TCompleated, TFailed}"/> and returns the result objects.</returns>
-        protected abstract Task<RequestReturn> RunRequestAsync();
-
-        /// <summary>
-        /// Starts the <see cref="Request{TOptions, TCompleated, TFailed}"/> if it hasn't started or is paused.
+        /// Starts or resumes the request.
         /// </summary>
         public virtual void Start()
         {
             if (State != RequestState.Paused)
                 return;
+
             if (DeployDelay.HasValue)
             {
-                _ = WaitAndDeploy(DeployDelay.Value);
+                _ = WaitAndDeployAsync(DeployDelay.Value);
                 return;
             }
+
             State = RequestState.Idle;
             Options.Handler.RunRequests(this);
         }
 
         /// <summary>
-        /// Delays the deployment of the <see cref="Request{TOptions, TCompleated, TFailed}"/> until the specified timespan has elapsed.
+        /// Pauses the request at the next yield point.
         /// </summary>
-        /// <param name="timeSpan">The delay duration before deploying the <see cref="Request{TOptions, TCompleated, TFailed}"/>.</param>
-        private async Task WaitAndDeploy(TimeSpan timeSpan)
+        public virtual void Pause()
+        {
+            if (State != RequestState.Running)
+                return;
+
+            State = RequestState.Paused;
+        }
+
+        /// <summary>
+        /// Delays deployment of the request.
+        /// </summary>
+        private async Task WaitAndDeployAsync(TimeSpan delay)
         {
             State = RequestState.Waiting;
-            await Task.Delay(timeSpan);
+
+            try
+            {
+                await Task.Delay(delay, Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
             if (State != RequestState.Waiting)
                 return;
+
             State = RequestState.Idle;
             Options.Handler.RunRequests(this);
         }
 
         /// <summary>
-        /// Puts the <see cref="Request{TOptions, TCompleated, TFailed}"/> into a paused state.
+        /// Executes the request. Called by the handler.
         /// </summary>
-        public virtual void Pause() => State = RequestState.Paused;
-
-        /// <summary>
-        /// Attempts to transition the <see cref="IRequest"/> state to idle.
-        /// This is possible only if the request is not completed, failed, or cancelled.
-        /// </summary>
-        /// <returns>True if the request is in an idle <see cref="RequestState"/>, otherwise false.</returns>
-        public bool TrySetIdle()
+        async Task IRequest.StartRequestAsync()
         {
-            State = RequestState.Idle;
-            return State == RequestState.Idle;
+            // Check if we're resuming a paused execution (something waiting on semaphore)
+            if (State == RequestState.Idle && _pauseSemaphore.CurrentCount == 0)
+            {
+                // There's a paused execution waiting - create new completion source for this resume
+                _runningCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                // Resume it
+                State = RequestState.Running;
+                _pauseSemaphore.Release();
+
+                // Wait for the resumed execution to stop running (pause or complete)
+                await _runningCompletionSource.Task;
+                return;
+            }
+
+            // Fresh start - reset running task for this execution
+            _runningCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            // Start the execution in the background
+            _ = ExecuteInternalAsync();
+
+            // Wait until we're no longer running (paused or completed)
+            await _runningCompletionSource.Task;
         }
 
         /// <summary>
-        /// Sets a subsequent <see cref="IRequest"/> if neither the current nor the provided request has completed.
+        /// Internal execution method that runs the request logic.
         /// </summary>
-        /// <param name="request">The subsequent request to set.</param>
-        /// <returns><c>true</c> if the request was set; otherwise, <c>false</c>.</returns>
+        private async Task ExecuteInternalAsync()
+        {
+            // Set this request as the current context for Request.Yield()
+            Request.SetCurrent(this);
+
+            try
+            {
+                // Entry checkpoint
+                await YieldAsync();
+
+                if (!ShouldExecute())
+                    return;
+
+                State = RequestState.Running;
+
+                // Recreate CTS if we're restarting after handler cancellation
+                if (_requestCts.IsCancellationRequested && Options.CancellationToken?.IsCancellationRequested == false)
+                {
+                    await ResetCancellationTokenAsync();
+                }
+
+                // Marshal callback to original context
+                SynchronizationContext.Post(_ => Options.RequestStarted?.Invoke(this), null);
+
+                // Execute the request
+                RequestReturn result = await ExecuteRequestAsync();
+
+                // Process the result
+                await ProcessResultAsync(result);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is already handled
+            }
+            catch (Exception ex)
+            {
+                AddException(ex);
+                await ProcessResultAsync(new RequestReturn { Successful = false });
+            }
+            finally
+            {
+                Request.SetCurrent(null);
+            }
+        }
+
+        /// <summary>
+        /// Checks if the request should execute.
+        /// </summary>
+        private bool ShouldExecute() =>
+            State == RequestState.Idle
+            && !Options.Handler.CancellationToken.IsCancellationRequested
+            && Options.CancellationToken?.IsCancellationRequested != true;
+
+        /// <summary>
+        /// Resets the cancellation token source.
+        /// </summary>
+        private async Task ResetCancellationTokenAsync()
+        {
+            await _ctr.DisposeAsync();
+            _requestCts.Dispose();
+            _requestCts = CreateCancellationTokenSource();
+            _ctr = RegisterCancellation();
+        }
+
+        /// <summary>
+        /// Executes the request with exception handling.
+        /// </summary>
+        private async Task<RequestReturn> ExecuteRequestAsync()
+        {
+            try
+            {
+                return await RunRequestAsync();
+            }
+            catch (Exception ex)
+            {
+                AddException(ex);
+                Debug.WriteLine($"Request exception on attempt {AttemptCounter + 1}: {ex.Message}");
+                return new RequestReturn { Successful = false };
+            }
+        }
+
+        /// <summary>
+        /// Processes the result of the request execution.
+        /// </summary>
+        private async Task ProcessResultAsync(RequestReturn result)
+        {
+            // If state changed (e.g., paused manually), just return
+            if (State != RequestState.Running)
+                return;
+
+            if (result.Successful)
+            {
+                State = RequestState.Completed;
+                _completionSource.TrySetResult();
+
+                if (result.CompletedReturn is not null)
+                {
+                    SynchronizationContext.Post(_ => Options.RequestCompleted?.Invoke(this, result.CompletedReturn), null);
+                }
+            }
+            else
+            {
+                AttemptCounter++;
+
+                // Check if request itself was cancelled
+                if (Options.CancellationToken?.IsCancellationRequested == true)
+                {
+                    State = RequestState.Cancelled;
+                    _completionSource.TrySetCanceled();
+                    return;
+                }
+
+                // Check if handler was cancelled - pause and wait for resume
+                if (Options.Handler.CancellationToken.IsCancellationRequested)
+                {
+                    State = RequestState.Idle;
+                    return;
+                }
+
+                // Check if we should retry
+                if (AttemptCounter < Options.NumberOfAttempts)
+                {
+                    if (Options.DelayBetweenAttemps.HasValue)
+                    {
+                        await WaitAndDeployAsync(Options.DelayBetweenAttemps.Value);
+                    }
+                    else
+                    {
+                        State = RequestState.Idle;
+                        Options.Handler.RunRequests(this);
+                    }
+                    return;
+                }
+
+                // All retries exhausted
+                State = RequestState.Failed;
+                _completionSource.TrySetResult();
+
+                if (result.FailedReturn is not null)
+                {
+                    SynchronizationContext.Post(_ => Options.RequestFailed?.Invoke(this, result.FailedReturn), null);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Yield point that respects pause and cancellation state.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task YieldAsync()
+        {
+            Token.ThrowIfCancellationRequested();
+
+            if (State == RequestState.Paused)
+            {
+                // Wait for handler to resume us
+                await _pauseSemaphore.WaitAsync(Token);
+            }
+        }
+
+        /// <summary>
+        /// Adds an exception to the aggregate exception list.
+        /// </summary>
+        protected void AddException(Exception exception)
+        {
+            _exceptions.Add(exception);
+            Exception = new AggregateException(_exceptions);
+            SynchronizationContext.Post(_ => Options.RequestExceptionOccurred?.Invoke(this, exception), null);
+        }
+
+        /// <summary>
+        /// Attempts to set the request state to idle.
+        /// </summary>
+        public bool TrySetIdle()
+        {
+            if (HasCompleted())
+                return false;
+
+            State = RequestState.Idle;
+            return true;
+        }
+
+        /// <summary>
+        /// Sets a subsequent request to execute after this one completes.
+        /// </summary>
         public bool TrySetSubsequentRequest(IRequest request)
         {
             if (HasCompleted() || request.HasCompleted())
                 return false;
+
             Options.SubsequentRequest = request;
             return true;
         }
 
         /// <summary>
-        /// Checks whether the <see cref="IRequest"/> has reached a final state (e.g., completed, failed, or cancelled) and will no longer change.
+        /// Checks if the request has reached a final state.
         /// </summary>
-        /// <returns><c>true</c> if the request is in a final state; otherwise, <c>false</c>.</returns>
         public bool HasCompleted() => State is RequestState.Completed or RequestState.Failed or RequestState.Cancelled;
 
         /// <summary>
-        /// A class that encapsulates the return objects and notifications for <see cref="Request{TOptions, TCompleated, TFailed}"/>.
+        /// Waits for the request to complete.
+        /// </summary>
+        public virtual void Wait() => Task.Wait();
+
+        /// <summary>
+        /// Gets an awaiter for this request (equivalent to awaiting Task).
+        /// </summary>
+        public TaskAwaiter GetAwaiter() => Task.GetAwaiter();
+
+        /// <summary>
+        /// Gets an awaiter that completes when the request is no longer running.
+        /// Useful for waiting until a request is paused or completed.
+        /// </summary>
+        public TaskAwaiter GetRunningAwaiter() => _runningCompletionSource.Task.GetAwaiter();
+
+        /// <summary>
+        /// Disposes the request and releases all resources.
+        /// </summary>
+        public virtual void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            if (!HasCompleted())
+                Cancel();
+
+            _disposed = true;
+
+            _requestCts?.Dispose();
+            _ctr.Dispose();
+            _pauseSemaphore?.Dispose();
+            _completionSource.TrySetCanceled();
+            _runningCompletionSource.TrySetCanceled();
+
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Starts the request if auto-start is enabled.
+        /// </summary>
+        protected void AutoStart()
+        {
+            if (Options.AutoStart)
+                Start();
+        }
+
+        /// <summary>
+        /// Abstract method to be implemented by derived classes.
+        /// Contains the core logic of the request.
+        /// </summary>
+        protected abstract Task<RequestReturn> RunRequestAsync();
+
+        /// <summary>
+        /// Encapsulates the return value and status of a request execution.
         /// </summary>
         protected class RequestReturn
         {
             /// <summary>
-            /// Default constructor.
+            /// Indicates whether the request completed successfully.
             /// </summary>
-            public RequestReturn() { }
-
+            public bool Successful { get; set; }
 
             /// <summary>
-            /// Initializes a new instance of the <see cref="Request{TOptions, TCompleated, TFailed}.RequestReturn"/> class.
+            /// The value returned on successful completion.
             /// </summary>
-            /// <param name="successful">Indicates whether the operation was successful.</param>
-            /// <param name="compleatedReturn">The object to be returned if the operation completed successfully.</param>
-            /// <param name="failedReturn">The object to be returned if the operation failed.</param>
-            public RequestReturn(bool successful, TCompleated compleatedReturn, TFailed failedReturn)
-            {
-                Successful = successful;
-                CompletedReturn = compleatedReturn;
-                FailedReturn = failedReturn;
-            }
-
+            public TCompleted? CompletedReturn { get; set; }
 
             /// <summary>
-            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestCompleted"/> delegate is invoked.
-            /// </summary>
-            public TCompleated? CompletedReturn { get; set; }
-
-            /// <summary>
-            /// The object that will be returned when the <see cref="RequestOptions{TCompleated,TFailed}.RequestFailed"/> delegate is invoked.
+            /// The value returned on failure.
             /// </summary>
             public TFailed? FailedReturn { get; set; }
 
             /// <summary>
-            /// A flag indicating whether the <see cref="Request{TOptions, TCompleated, TFailed}"/> was successful.
+            /// Creates a successful result.
             /// </summary>
-            public bool Successful { get; set; }
+            public static RequestReturn Success(TCompleted value) => new()
+            {
+                Successful = true,
+                CompletedReturn = value
+            };
+
+            /// <summary>
+            /// Creates a failed result.
+            /// </summary>
+            public static RequestReturn Failure(TFailed value) => new()
+            {
+                Successful = false,
+                FailedReturn = value
+            };
         }
     }
 }

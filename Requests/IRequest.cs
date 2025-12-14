@@ -3,75 +3,85 @@
 namespace Requests
 {
     /// <summary>
-    /// Represents an <see cref="IRequest"/> object that can be managed by the <see cref="RequestHandler"/>.
+    /// Represents a request that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
     public interface IRequest : IDisposable
     {
         /// <summary>
-        /// Gets the current <see cref="RequestState"/> of this <see cref="IRequest"/>.
+        /// Gets the current <see cref="RequestState"/> of this request.
         /// </summary>
-        public abstract RequestState State { get; }
+        RequestState State { get; }
 
         /// <summary>
-        /// Event that is triggered when the <see cref="State"/> of this object changes.
+        /// Event that is triggered when the <see cref="State"/> changes.
         /// </summary>
-        public abstract event EventHandler<RequestState>? StateChanged;
+        event EventHandler<RequestState>? StateChanged;
 
         /// <summary>
-        /// Indicates whether the <see cref="IRequest"/> has priority over other non-prioritized <see cref="IRequest">Requests</see>.
+        /// Gets the priority level of this request.
+        /// Higher priority requests are executed before lower priority ones.
         /// </summary>
-        public abstract RequestPriority Priority { get; }
+        RequestPriority Priority { get; }
 
         /// <summary>
-        /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
+        /// Gets the request that should be executed immediately after this request completes,
+        /// bypassing the queue.
         /// </summary>
         /// <remarks>
-        /// The subsequent request supports auto-starting if enabled, but this behavior can be disabled if not desired.
-        /// <br/>If the subsequent request is already running, it will not be started again.
-        /// <br/>If this request fails, the subsequent request will be canceled and disposed.
+        /// The subsequent request supports auto-starting if enabled.
+        /// If the subsequent request is already running, it will not be started again.
+        /// If this request fails, the subsequent request will be canceled and disposed.
         /// </remarks>
-        public abstract IRequest? SubsequentRequest { get; }
+        IRequest? SubsequentRequest { get; }
 
         /// <summary>
-        /// Gets the <see cref="System.Threading.Tasks.Task"/> representing the completion status of this <see cref="IRequest"/>.
+        /// Gets the <see cref="System.Threading.Tasks.Task"/> representing the 
+        /// completion status of this request.
         /// </summary>
-        public abstract Task Task { get; }
+        Task Task { get; }
 
         /// <summary>
         /// Gets the <see cref="AggregateException"/> that occurred during processing, if any.
         /// </summary>
-        public abstract AggregateException? Exception { get; }
+        AggregateException? Exception { get; }
 
         /// <summary>
-        /// Starts the execution of the <see cref="IRequest"/> created from this object.
+        /// Starts the execution of the request asynchronously.
         /// </summary>
-        public Task StartRequestAsync();
+        /// <returns>A task representing the asynchronous operation.</returns>
+        Task StartRequestAsync();
 
         /// <summary>
-        /// Cancels the execution of the <see cref="IRequest"/>.
+        /// Cancels the execution of the request.
         /// </summary>
-        public abstract void Cancel();
+        void Cancel();
 
         /// <summary>
-        /// Starts the <see cref="IRequest"/> if it is not yet started or resumes it if paused.
+        /// Starts the request if it is not yet started, or resumes it if paused.
         /// </summary>
-        public abstract void Start();
+        void Start();
 
         /// <summary>
-        /// Puts the <see cref="IRequest"/> on hold, allowing it to be resumed later.
+        /// Pauses the request, allowing it to be resumed later.
         /// </summary>
-        public abstract void Pause();
+        void Pause();
 
         /// <summary>
-        /// Attempts to set the <see cref="IRequest"/> <see cref="State"/> to idle.
+        /// Attempts to set the request <see cref="State"/> to idle.
         /// </summary>
         /// <returns><c>true</c> if the state was successfully set to idle; otherwise, <c>false</c>.</returns>
-        public abstract bool TrySetIdle();
+        bool TrySetIdle();
 
         /// <summary>
-        /// Checks whether the <see cref="IRequest"/> has reached a final state and will no longer change.
+        /// Checks whether the request has reached a final state and will no longer change.
         /// </summary>
         /// <returns><c>true</c> if the request is in a final state; otherwise, <c>false</c>.</returns>
-        public abstract bool HasCompleted();
+        bool HasCompleted();
+
+        /// <summary>
+        /// Yields control back to the request scheduler, allowing inline pause.
+        /// </summary>
+        /// <returns>A task that completes when the request can continue execution.</returns>
+        ValueTask YieldAsync();
     }
 }
