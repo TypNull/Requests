@@ -9,7 +9,7 @@ namespace Requests
     /// The <see cref="RequestHandler"/> class is responsible for executing instances of the <see cref="IRequest"/> interface.
     /// Optimized for high-performance scenarios with minimal allocations and thread-safe state management.
     /// </summary>
-    public partial class RequestHandler : IRequestContainer<IRequest>
+    public class RequestHandler : IRequestContainer<IRequest>, IAsyncEnumerable<IRequest>
     {
         private readonly IPriorityChannel<IRequest> _requestsChannel;
         private readonly RequestContainerStateMachine _stateMachine;
@@ -20,6 +20,7 @@ namespace Requests
         private CancellationTokenSource _cts = new();
         private readonly PauseTokenSource _pts = new();
         private Task? _task;
+        private Exception? _unhandledException;
 
         // Cached delegate to avoid allocations
         private static readonly SendOrPostCallback s_stateChangedCallback = static state =>
@@ -31,12 +32,17 @@ namespace Requests
         /// <summary>
         /// Represents the current state of this <see cref="RequestHandler"/>.
         /// </summary>
-        public RequestState State { get => _stateMachine.Current; private set => _stateMachine.TryTransition(value); }
+        public RequestState State => _stateMachine.Current;
 
         /// <summary>
         /// Event triggered when the <see cref="State"/> of this object changes.
         /// </summary>
         public event EventHandler<RequestState>? StateChanged;
+
+        /// <summary>
+        /// Event triggered when an unhandled exception occurs in the handler.
+        /// </summary>
+        public event EventHandler<Exception>? UnhandledException;
 
         /// <summary>
         /// The priority of this request handler.
@@ -50,9 +56,9 @@ namespace Requests
 
         /// <summary>
         /// Gets the aggregate exception associated with the <see cref="RequestHandler"/> instance.
-        /// Currently, this property always returns <c>null</c>, indicating that no exceptions are associated with the handler.
+        /// Returns the last unhandled exception if any occurred.
         /// </summary>
-        public AggregateException? Exception => null;
+        public AggregateException? Exception => _unhandledException != null ? new AggregateException(_unhandledException) : null;
 
         /// <summary>
         /// Property that sets the degree of parallel execution of instances of the <see cref="IRequest"/> interface. 
@@ -107,13 +113,55 @@ namespace Requests
         public int Count => _requestsChannel.Count;
 
         /// <summary>
-        /// Represents a task that completes when all the requests currently present in the handler have finished processing.
-        /// This task does not account for any requests that may be added to the handler after its creation.
+        /// Asynchronously enumerates all currently pending requests in the handler.
         /// </summary>
+        /// <param name="cancellationToken">Cancellation token to stop enumeration.</param>
+        /// <returns>An async enumerator of pending requests.</returns>
         /// <remarks>
         /// <strong>Warning:</strong> This operation may block the handler for a period of time.
         /// </remarks>
-        public Task CurrentTask => Task.WhenAll(_requestsChannel.ToArray().Select(requestPair => requestPair.Item.Task));
+        public async IAsyncEnumerator<IRequest> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            // Take a snapshot to avoid blocking
+            PriorityItem<IRequest>[] snapshot;
+            try
+            {
+                snapshot = _requestsChannel.ToArray();
+            }
+            catch
+            {
+                yield break;
+            }
+
+            foreach (PriorityItem<IRequest> item in snapshot)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return item.Item;
+                await Task.Yield();
+            }
+        }
+
+        /// <summary>
+        /// Waits for all currently pending requests to complete.
+        /// Equivalent to awaiting all requests from 'await foreach (var request in handler)'.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Task that completes when all current requests are done.</returns>
+        /// <remarks>
+        /// <strong>Warning:</strong> This operation may block the handler for a period of time.
+        /// </remarks>
+        public async Task WaitForCurrentRequestsAsync(CancellationToken cancellationToken = default)
+        {
+            List<Task> tasks = [];
+
+            await foreach (IRequest request in this.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                tasks.Add(request.Task);
+            }
+
+            if (tasks.Count > 0)
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
 
         /// <summary>
         /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
@@ -148,12 +196,56 @@ namespace Requests
             => DefaultSynchronizationContext.Post(s_stateChangedCallback, (this, newState));
 
         /// <summary>
-        /// Method to add a single instance of the <see cref="IRequest"/> interface to the handler.
+        /// Attempts to transition to a new state.
+        /// Throws if transition is invalid.
+        /// </summary>
+        private void SetState(RequestState newState)
+        {
+            if (!_stateMachine.TryTransition(newState))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid state transition from {State} to {newState}");
+            }
+        }
+
+        /// <summary>
+        /// Handles unhandled exceptions from the handler's execution.
+        /// </summary>
+        private void OnUnhandledExceptionOccurred(Exception ex)
+        {
+            _unhandledException = ex;
+            DefaultSynchronizationContext.Post(static state =>
+            {
+                (RequestHandler handler, Exception exception) = ((RequestHandler, Exception))state!;
+                handler.UnhandledException?.Invoke(handler, exception);
+            }, (this, ex));
+        }
+
+        /// <summary>
+        /// Synchronously adds a request to the handler.
+        /// Throws if the channel is closed or the request is null.
         /// </summary>
         /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        /// <exception cref="ArgumentNullException">Thrown if request is null.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if the channel is closed.</exception>
         public void Add(IRequest request)
-            => _ = _requestsChannel.Writer.WriteAsync(new(request.Priority, request)).AsTask();
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            if (!_requestsChannel.Writer.TryWrite(new(request.Priority, request)))
+                throw new InvalidOperationException("Failed to add request, channel may be closed or full");
+        }
+
+        /// <summary>
+        /// Asynchronously adds a request to the handler.
+        /// </summary>
+        /// <param name="request">The request to add.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        public async ValueTask AddAsync(IRequest request, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            await _requestsChannel.Writer.WriteAsync(new(request.Priority, request), cancellationToken).ConfigureAwait(false);
+        }
 
         /// <summary>
         /// Method to add multiple instances of the <see cref="IRequest"/> interface to the handler.
@@ -161,6 +253,7 @@ namespace Requests
         /// <param name="requests">The instances of the <see cref="IRequest"/> interface that should be added.</param>
         public void AddRange(params IRequest[] requests)
         {
+            ArgumentNullException.ThrowIfNull(requests);
             foreach (IRequest request in requests)
                 Add(request);
         }
@@ -190,13 +283,15 @@ namespace Requests
         /// </summary>
         public void Start()
         {
-            if (!_requestsChannel.Options.EasyEndToken.IsPaused)
+            if (!_pts.IsPaused)
                 return;
 
-            State = RequestState.Idle;
+            if (!_stateMachine.TryTransition(RequestState.Idle))
+                return;
+
             _pts.Resume();
 
-            if (Count > 0)
+            if (_requestsChannel.Reader.Count > 0)
                 RunRequests();
         }
 
@@ -206,7 +301,7 @@ namespace Requests
         public void Pause()
         {
             _pts.Pause();
-            State = RequestState.Paused;
+            _stateMachine.TryTransition(RequestState.Paused);
         }
 
         /// <summary>
@@ -223,6 +318,7 @@ namespace Requests
                 _cts = new CancellationTokenSource();
                 _requestsChannel.Options.CancellationToken = CancellationToken;
 
+                _stateMachine.TryTransition(RequestState.Idle);
                 if (Count > 0)
                     RunRequests();
             }
@@ -243,7 +339,7 @@ namespace Requests
         public void Cancel()
         {
             _cts.Cancel();
-            State = RequestState.Cancelled;
+            _stateMachine.TryTransition(RequestState.Cancelled);
         }
 
         /// <summary>
@@ -282,7 +378,17 @@ namespace Requests
             if (State != RequestState.Idle)
                 return;
 
-            _ = Task.Run(async () => await ((IRequest)this).StartRequestAsync().ConfigureAwait(false));
+            _task = Task.Run(async () =>
+            {
+                try
+                {
+                    await ((IRequest)this).StartRequestAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    OnUnhandledExceptionOccurred(ex);
+                }
+            });
         }
 
         /// <summary>
@@ -294,8 +400,7 @@ namespace Requests
             if (State != RequestState.Idle || CancellationToken.IsCancellationRequested || _pts.IsPaused)
                 return;
 
-            _task = RunChannelAsync();
-            await Task.ConfigureAwait(false);
+            await RunChannelAsync().ConfigureAwait(false);
         }
 
         /// <summary>
@@ -304,12 +409,19 @@ namespace Requests
         /// <returns>async Task to await</returns>
         private async Task RunChannelAsync()
         {
-            State = RequestState.Running;
+            SetState(RequestState.Running);
             UpdateAutoParallelism();
 
-            await _requestsChannel.RunParallelReader(async (pair, ct) => await HandleRequestAsync(pair).ConfigureAwait(false)).ConfigureAwait(false);
-
-            State = RequestState.Idle;
+            try
+            {
+                await _requestsChannel.RunParallelReader(async (pair, ct) =>
+                    await HandleRequestAsync(pair).ConfigureAwait(false))
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                _stateMachine.TryTransition(RequestState.Idle);
+            }
 
             if (_requestsChannel.Reader.Count > 0)
                 await ((IRequest)this).StartRequestAsync().ConfigureAwait(false);
@@ -333,7 +445,7 @@ namespace Requests
             }
             else if (request.State == RequestState.Idle)
             {
-                await _requestsChannel.Writer.WriteAsync(pair).ConfigureAwait(false);
+                await _requestsChannel.Writer.WriteAsync(pair, CancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -377,25 +489,47 @@ namespace Requests
 
         /// <summary>
         /// Attempts to set all <see cref="IRequest"/> objects in the container's <see cref="State"/> to idle.
-        /// No new requests will be started or read while processing. And the running requests will be paused.
+        /// Pauses the handler during this operation and returns it to the previous state afterward.
         /// </summary>
         /// <returns>True if all <see cref="IRequest"/> objects are in an idle <see cref="RequestState"/>, otherwise false.</returns>
         public bool TrySetIdle()
         {
-            Pause();
-            PriorityItem<IRequest>[] requests = _requestsChannel.ToArray();
+            RequestState previousState = State;
 
-            foreach (PriorityItem<IRequest> priorityItem in requests)
-                _ = priorityItem.Item.TrySetIdle();
+            if (!_stateMachine.TryTransition(RequestState.Paused))
+                return false;
 
-            return requests.All(x => x.Item.State == RequestState.Idle);
+            try
+            {
+                PriorityItem<IRequest>[] requests = _requestsChannel.ToArray();
+
+                foreach (PriorityItem<IRequest> priorityItem in requests)
+                    _ = priorityItem.Item.TrySetIdle();
+
+                bool allIdle = requests.All(x => x.Item.State == RequestState.Idle);
+
+                // Restore previous state if we paused it
+                if (previousState != RequestState.Paused)
+                    _stateMachine.TryTransition(previousState);
+
+                return allIdle;
+            }
+            catch
+            {
+                // Restore state on error
+                if (previousState != RequestState.Paused)
+                    _stateMachine.TryTransition(previousState);
+                throw;
+            }
         }
 
         /// <summary>
-        /// Checks whether the <see cref="RequestHandler"/> has reached a final state and will process <see cref="IRequest"/> objects.
+        /// Checks whether the <see cref="RequestHandler"/> has completed all work.
         /// </summary>
-        /// <returns><c>true</c> if the handler is in a final state; otherwise, <c>false</c>.</returns>
-        public bool HasCompleted() => _requestsChannel.Reader.Completion.IsCompleted;
+        /// <returns><c>true</c> if the handler is in a terminal state and has no pending requests; otherwise, <c>false</c>.</returns>
+        public bool HasCompleted() =>
+            State is RequestState.Completed or RequestState.Cancelled
+            && _requestsChannel.Reader.Count == 0;
 
         /// <summary>
         /// Yield point for IRequest interface compatibility.
@@ -449,6 +583,8 @@ namespace Requests
         /// Attempts to remove the specified requests from the priority channel.
         /// </summary>
         /// <param name="requests">The requests to remove.</param>
+        /// <exception cref="ArgumentNullException">Thrown if requests is null or empty.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if a request cannot be removed.</exception>
         /// <remarks>
         /// <strong>Warning:</strong> This method can produce a significant amount of overhead, especially when dealing with a large number of requests.
         /// </remarks>
@@ -459,6 +595,9 @@ namespace Requests
 
             foreach (IRequest request in requests)
             {
+                if (request == null)
+                    throw new ArgumentNullException(nameof(requests), "Individual request cannot be null.");
+
                 if (!_requestsChannel.TryRemove(new(request.Priority, request)))
                     throw new InvalidOperationException($"Failed to remove request: {request}");
             }
