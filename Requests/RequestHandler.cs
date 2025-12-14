@@ -1,35 +1,37 @@
 ﻿using Requests.Channel;
 using Requests.Options;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Requests
 {
     /// <summary>
     /// The <see cref="RequestHandler"/> class is responsible for executing instances of the <see cref="IRequest"/> interface.
+    /// Optimized for high-performance scenarios with minimal allocations and thread-safe state management.
     /// </summary>
-    public class RequestHandler : IRequestContainer<IRequest>
+    public partial class RequestHandler : IRequestContainer<IRequest>
     {
-        /// <summary>
-        /// A priority channel that queues all incoming instances of the <see cref="IRequest"/> interface.
-        /// </summary>
         private readonly IPriorityChannel<IRequest> _requestsChannel;
+        private readonly RequestContainerStateMachine _stateMachine;
         private bool _disposed;
+        private RequestPriority _priority;
+        private int? _staticDegreeOfParallelism;
+        private int _maxParallelism = Environment.ProcessorCount;
+        private CancellationTokenSource _cts = new();
+        private readonly PauseTokenSource _pts = new();
+        private Task? _task;
+
+        // Cached delegate to avoid allocations
+        private static readonly SendOrPostCallback s_stateChangedCallback = static state =>
+        {
+            (RequestHandler handler, RequestState newState) = ((RequestHandler, RequestState))state!;
+            handler.StateChanged?.Invoke(handler, newState);
+        };
 
         /// <summary>
         /// Represents the current state of this <see cref="RequestHandler"/>.
         /// </summary>
-        public RequestState State
-        {
-            get { return _state; }
-            protected set
-            {
-                if (_state == value)
-                    return;
-                _state = value;
-                DefaultSynchronizationContext.Post((o) => StateChanged?.Invoke((IRequest)o!, value), this);
-            }
-        }
-        private RequestState _state = RequestState.Idle;
+        public RequestState State { get => _stateMachine.Current; private set => _stateMachine.TryTransition(value); }
 
         /// <summary>
         /// Event triggered when the <see cref="State"/> of this object changes.
@@ -40,14 +42,11 @@ namespace Requests
         /// The priority of this request handler.
         /// </summary>
         public RequestPriority Priority => _priority;
-        private RequestPriority _priority;
-
 
         /// <summary>
         /// Represents the combined task of the requests.
         /// </summary>
         public Task Task => _task ?? Task.CompletedTask;
-        private Task? _task;
 
         /// <summary>
         /// Gets the aggregate exception associated with the <see cref="RequestHandler"/> instance.
@@ -61,13 +60,13 @@ namespace Requests
         /// </summary>
         public int? StaticDegreeOfParallelism
         {
-            get => _staticDegreeOfParallelism; set
+            get => _staticDegreeOfParallelism;
+            set
             {
                 _requestsChannel.Options.MaxDegreeOfParallelism = value ?? AutoParallelism.Invoke();
                 _staticDegreeOfParallelism = value;
             }
         }
-        private int? _staticDegreeOfParallelism;
 
         /// <summary>
         /// A function that calculates the degree of parallel execution of instances of the <see cref="IRequest"/> interface dynamically while running.
@@ -77,11 +76,15 @@ namespace Requests
         /// <summary>
         /// Property that sets the maximum possible degree of parallel execution of instances of the <see cref="IRequest"/> interface.
         /// </summary>
-        public int MaxParallelism { get => _maxParallelism; set { if (value < 0) throw new ArgumentOutOfRangeException(nameof(MaxParallelism)); _maxParallelism = value; } }
-        private int _maxParallelism = Environment.ProcessorCount;
-
-        private CancellationTokenSource _cts = new();
-        private readonly PauseTokenSource _pts = new();
+        public int MaxParallelism
+        {
+            get => _maxParallelism;
+            set
+            {
+                ArgumentOutOfRangeException.ThrowIfNegative(value);
+                _maxParallelism = value;
+            }
+        }
 
         /// <summary>
         /// The main <see cref="System.Threading.CancellationToken"/> for all instances of the <see cref="IRequest"/> interface.
@@ -91,7 +94,7 @@ namespace Requests
         /// <summary>
         /// Two primary handlers to handle instances of the <see cref="IRequest"/> interface.
         /// </summary>
-        public static RequestHandler[] MainRequestHandlers { get; } = new RequestHandler[] { new(), new() };
+        public static RequestHandler[] MainRequestHandlers { get; } = [[], []];
 
         /// <summary>
         /// A default synchronization context that targets the ThreadPool.
@@ -119,21 +122,13 @@ namespace Requests
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RequestHandler"/> class with a priority channel.
-        /// If the priority count is zero, an exception is thrown; otherwise, a fixed-size priority channel is created.
-        /// If the priority count is null, a dynamic-size priority channel is created.
         /// </summary>
-        /// <param name="priorityCount">The number of priority levels for the fixed-size priority channel. If zero, an exception is thrown. If null, a dynamic-size priority channel is used.</param>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown if the priority count is negative or zero.</exception>
-        public RequestHandler(int priorityCount = 3)
+        /// <exception cref="ArgumentOutOfRangeException">Thrown if the priority count is negative.</exception>
+        public RequestHandler()
         {
-            if (priorityCount < 0)
-                throw new ArgumentOutOfRangeException(nameof(priorityCount), "Priority count cannot be negative.");
-
-            _requestsChannel = priorityCount > 0 ?
-                 new FixedPriorityChannel<IRequest>(priorityCount)
-                : new DynamicPriorityChannel<IRequest>();
+            _requestsChannel = new DynamicPriorityChannel<IRequest>();
+            _stateMachine = new RequestContainerStateMachine(RequestState.Idle, OnStateChanged);
         }
-
 
         /// <summary>
         /// Constructor for the <see cref="RequestHandler"/> class.
@@ -147,20 +142,28 @@ namespace Requests
         }
 
         /// <summary>
+        /// Callback when state changes.
+        /// </summary>
+        private void OnStateChanged(RequestState oldState, RequestState newState)
+            => DefaultSynchronizationContext.Post(s_stateChangedCallback, (this, newState));
+
+        /// <summary>
         /// Method to add a single instance of the <see cref="IRequest"/> interface to the handler.
         /// </summary>
         /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Add(IRequest request)
-        => _ = _requestsChannel.Writer.WriteAsync(new(request.Priority, request)).AsTask();
-
+            => _ = _requestsChannel.Writer.WriteAsync(new(request.Priority, request)).AsTask();
 
         /// <summary>
         /// Method to add multiple instances of the <see cref="IRequest"/> interface to the handler.
         /// </summary>
         /// <param name="requests">The instances of the <see cref="IRequest"/> interface that should be added.</param>
         public void AddRange(params IRequest[] requests)
-        => Array.ForEach(requests, request => _ = _requestsChannel.Writer.WriteAsync(new(request.Priority, request)).AsTask());
-
+        {
+            foreach (IRequest request in requests)
+                Add(request);
+        }
 
         /// <summary>
         /// Method to run the instance of the <see cref="IRequest"/> interface and add instances of the <see cref="IRequest"/> interface.
@@ -189,8 +192,10 @@ namespace Requests
         {
             if (!_requestsChannel.Options.EasyEndToken.IsPaused)
                 return;
+
             State = RequestState.Idle;
             _pts.Resume();
+
             if (Count > 0)
                 RunRequests();
         }
@@ -217,6 +222,7 @@ namespace Requests
                 _cts.Dispose();
                 _cts = new CancellationTokenSource();
                 _requestsChannel.Options.CancellationToken = CancellationToken;
+
                 if (Count > 0)
                     RunRequests();
             }
@@ -225,7 +231,11 @@ namespace Requests
         /// <summary>
         /// Creates a new <see cref="CancellationTokenSource"/> for all main RequestHandlers.
         /// </summary>
-        public static void CreateMainCTS() => Array.ForEach(MainRequestHandlers, handler => handler.CreateCTS());
+        public static void CreateMainCTS()
+        {
+            foreach (RequestHandler handler in MainRequestHandlers)
+                handler.CreateCTS();
+        }
 
         /// <summary>
         /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in this RequestHandler.
@@ -239,27 +249,40 @@ namespace Requests
         /// <summary>
         /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in the Main RequestHandlers.
         /// </summary>
-        public static void CancelMainCTS() => Array.ForEach(MainRequestHandlers, handler => handler.Cancel());
+        public static void CancelMainCTS()
+        {
+            foreach (RequestHandler handler in MainRequestHandlers)
+                handler.Cancel();
+        }
 
         /// <summary>
         /// Pauses the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers, allowing any currently running requests to complete.
         /// </summary>
-        public static void PauseMain() => Array.ForEach(MainRequestHandlers, handler => handler.Pause());
+        public static void PauseMain()
+        {
+            foreach (RequestHandler handler in MainRequestHandlers)
+                handler.Pause();
+        }
 
         /// <summary>
         /// Resumes the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers if they were previously paused.
         /// </summary>
-        public static void ReusmeMain() => Array.ForEach(MainRequestHandlers, handler => handler.Start());
+        public static void ResumeMain()
+        {
+            foreach (RequestHandler handler in MainRequestHandlers)
+                handler.Start();
+        }
 
         /// <summary>
-        /// This method is responsible for executing the instances of the  <see cref="IRequest"/> if the handler is not currently running.
+        /// This method is responsible for executing the instances of the <see cref="IRequest"/> if the handler is not currently running.
         /// It updates the degree of parallelism based on the current system environment and runs the request channel.
         /// </summary>
         public void RunRequests()
         {
             if (State != RequestState.Idle)
                 return;
-            Task.Run(async () => await ((IRequest)this).StartRequestAsync());
+
+            _ = Task.Run(async () => await ((IRequest)this).StartRequestAsync().ConfigureAwait(false));
         }
 
         /// <summary>
@@ -270,22 +293,26 @@ namespace Requests
         {
             if (State != RequestState.Idle || CancellationToken.IsCancellationRequested || _pts.IsPaused)
                 return;
-            _task = RunChannel();
-            await Task;
+
+            _task = RunChannelAsync();
+            await Task.ConfigureAwait(false);
         }
 
         /// <summary>
         /// This method is responsible for running the request channel in parallel.
         /// </summary>
         /// <returns>async Task to await</returns>
-        private async Task RunChannel()
+        private async Task RunChannelAsync()
         {
             State = RequestState.Running;
             UpdateAutoParallelism();
-            await _requestsChannel.RunParallelReader(async (pair, ct) => await HandleRequests(pair));
+
+            await _requestsChannel.RunParallelReader(async (pair, ct) => await HandleRequestAsync(pair).ConfigureAwait(false)).ConfigureAwait(false);
+
             State = RequestState.Idle;
+
             if (_requestsChannel.Reader.Count > 0)
-                await ((IRequest)this).StartRequestAsync();
+                await ((IRequest)this).StartRequestAsync().ConfigureAwait(false);
         }
 
         /// <summary>
@@ -293,19 +320,21 @@ namespace Requests
         /// </summary>
         /// <param name="pair">Priority request pair</param>
         /// <returns>async Task to await</returns>
-        private async Task HandleRequests(PriorityItem<IRequest> pair)
+        private async Task HandleRequestAsync(PriorityItem<IRequest> pair)
         {
             IRequest request = pair.Item;
-            await request.StartRequestAsync();
+            await request.StartRequestAsync().ConfigureAwait(false);
 
             if (request.State is RequestState.Completed or RequestState.Failed or RequestState.Cancelled)
             {
                 request.Dispose();
                 if (request.SubsequentRequest != null)
-                    await SubsequentRequest(request);
+                    await HandleSubsequentRequestAsync(request).ConfigureAwait(false);
             }
             else if (request.State == RequestState.Idle)
-                await _requestsChannel.Writer.WriteAsync(pair);
+            {
+                await _requestsChannel.Writer.WriteAsync(pair).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
@@ -314,24 +343,25 @@ namespace Requests
         /// </summary>
         /// <param name="request">The request to process.</param>
         /// <returns>A task representing the operation.</returns>
-        private async Task SubsequentRequest(IRequest request)
+        private async Task HandleSubsequentRequestAsync(IRequest request)
         {
             IRequest subRequest = request.SubsequentRequest!;
+
             if (request.State == RequestState.Completed)
             {
                 if (subRequest.State != RequestState.Running && subRequest.TrySetIdle())
-                    await HandleRequests(new PriorityItem<IRequest>(subRequest.Priority, subRequest));
+                    await HandleRequestAsync(new PriorityItem<IRequest>(subRequest.Priority, subRequest)).ConfigureAwait(false);
             }
             else
             {
                 subRequest.Dispose();
                 if (subRequest.SubsequentRequest != null)
-                    await SubsequentRequest(subRequest.SubsequentRequest);
+                    await HandleSubsequentRequestAsync(subRequest).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Sets the priority for the <see cref="RequestContainer{TRequest}"/>.
+        /// Sets the priority for the <see cref="RequestHandler"/>.
         /// Not to the contained <see cref="IRequest"/> objects.
         /// </summary>
         public void SetPriority(RequestPriority priority) => _priority = priority;
@@ -354,16 +384,26 @@ namespace Requests
         {
             Pause();
             PriorityItem<IRequest>[] requests = _requestsChannel.ToArray();
+
             foreach (PriorityItem<IRequest> priorityItem in requests)
                 _ = priorityItem.Item.TrySetIdle();
+
             return requests.All(x => x.Item.State == RequestState.Idle);
         }
 
         /// <summary>
         /// Checks whether the <see cref="RequestHandler"/> has reached a final state and will process <see cref="IRequest"/> objects.
         /// </summary>
-        /// <returns><c>true</c> if the hanlder is in a final state; otherwise, <c>false</c>.</returns>
+        /// <returns><c>true</c> if the handler is in a final state; otherwise, <c>false</c>.</returns>
         public bool HasCompleted() => _requestsChannel.Reader.Completion.IsCompleted;
+
+        /// <summary>
+        /// Yield point for IRequest interface compatibility.
+        /// Handlers don't yield in the same way as individual requests, this is a no-op.
+        /// </summary>
+        /// <returns>A completed ValueTask.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ValueTask YieldAsync() => ValueTask.CompletedTask;
 
         /// <summary>
         /// Disposes the <see cref="RequestHandler"/> instance and canceling all ongoing tasks.
@@ -410,7 +450,7 @@ namespace Requests
         /// </summary>
         /// <param name="requests">The requests to remove.</param>
         /// <remarks>
-        /// This method can produce a significant amount of overhead, especially when dealing with a large number of requests.
+        /// <strong>Warning:</strong> This method can produce a significant amount of overhead, especially when dealing with a large number of requests.
         /// </remarks>
         public void Remove(params IRequest[] requests)
         {
@@ -418,8 +458,10 @@ namespace Requests
                 throw new ArgumentNullException(nameof(requests), "Requests cannot be null or empty.");
 
             foreach (IRequest request in requests)
+            {
                 if (!_requestsChannel.TryRemove(new(request.Priority, request)))
                     throw new InvalidOperationException($"Failed to remove request: {request}");
+            }
         }
 
         /// <summary>
