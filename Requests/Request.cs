@@ -213,7 +213,6 @@ namespace Requests
                 _requestCts.Cancel();
 
             _completionSource.TrySetCanceled();
-            _runningSource.SetException(new OperationCanceledException());
 
             // Marshal callback to original context
             SynchronizationContext.Post(s_requestCancelledCallback, this);
@@ -477,7 +476,6 @@ namespace Requests
 
         /// <summary>
         /// Slow path for YieldAsync when pause or cancellation is involved.
-        /// IMPROVED: Lazy allocation of pause TCS, no race conditions.
         /// </summary>
         private async ValueTask YieldAsyncSlow()
         {
@@ -489,9 +487,6 @@ namespace Requests
                 TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 _pauseTcs = tcs;
                 _hasPausedExecution = true;
-
-                // Signal we're no longer running
-                _runningSource.SetResult(true);
 
                 // Wait for resume
                 await tcs.Task.ConfigureAwait(false);
@@ -555,7 +550,7 @@ namespace Requests
         /// Gets an awaiter that completes when the request is no longer running.
         /// Useful for waiting until a request is paused or completed.
         /// </summary>
-        public ValueTaskAwaiter GetRunningAwaiter() => new ValueTask(this, _runningSourceVersion).GetAwaiter();
+        public ValueTask GetRunningAwaiter() => new(this, _runningSourceVersion);
 
         /// <summary>
         /// Disposes the request and releases all resources.
