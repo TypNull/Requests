@@ -1,26 +1,69 @@
 using Requests.Options;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks.Sources;
 
 namespace Requests
 {
     /// <summary>
     /// Base class for requests that can be managed by the <see cref="RequestHandler"/>.
     /// </summary>
-    /// <typeparam name="TOptions">The type of options.</typeparam>
-    /// <typeparam name="TCompleted">The type of completed return.</typeparam>
-    /// <typeparam name="TFailed">The type of failed return.</typeparam>
-    public abstract class Request<TOptions, TCompleted, TFailed> : IRequest
+    public abstract partial class Request<TOptions, TCompleted, TFailed> : IRequest, IValueTaskSource
         where TOptions : RequestOptions<TCompleted, TFailed>, new()
     {
         private bool _disposed;
-        private RequestState _state = RequestState.Paused;
         private readonly TaskCompletionSource _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private TaskCompletionSource _runningCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private ManualResetValueTaskSourceCore<bool> _runningSource;
+        private short _runningSourceVersion;
         private readonly List<Exception> _exceptions = [];
-        private readonly SemaphoreSlim _pauseSemaphore = new(0, 1); // Starts locked
-        private CancellationTokenSource _requestCts = null!; // Initialized in constructor
+        private CancellationTokenSource _requestCts = null!;
         private CancellationTokenRegistration _ctr;
+
+        private TaskCompletionSource<bool>? _pauseTcs;
+        private volatile bool _hasPausedExecution;
+
+        private readonly RequestStateMachine _stateMachine;
+
+        private static readonly SendOrPostCallback s_stateChangedCallback = static state =>
+        {
+            (Request<TOptions, TCompleted, TFailed> request, RequestState newState) =
+                ((Request<TOptions, TCompleted, TFailed>, RequestState))state!;
+            request.StateChanged?.Invoke(request, newState);
+        };
+
+        private static readonly SendOrPostCallback s_requestStartedCallback = static state =>
+        {
+            Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
+            request.Options.RequestStarted?.Invoke(request);
+        };
+
+        private static readonly SendOrPostCallback s_requestCancelledCallback = static state =>
+        {
+            Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
+            request.Options.RequestCancelled?.Invoke(request);
+        };
+
+        private static readonly SendOrPostCallback s_requestCompletedCallback = static state =>
+        {
+            (Request<TOptions, TCompleted, TFailed> request, TCompleted? result) =
+                ((Request<TOptions, TCompleted, TFailed>, TCompleted))state!;
+            request.Options.RequestCompleted?.Invoke(request, result);
+        };
+
+        private static readonly SendOrPostCallback s_requestFailedCallback = static state =>
+        {
+            (Request<TOptions, TCompleted, TFailed> request, TFailed? result) =
+                ((Request<TOptions, TCompleted, TFailed>, TFailed))state!;
+            request.Options.RequestFailed?.Invoke(request, result);
+        };
+
+        private static readonly SendOrPostCallback s_requestExceptionCallback = static state =>
+        {
+            (Request<TOptions, TCompleted, TFailed> request, Exception? exception) =
+                ((Request<TOptions, TCompleted, TFailed>, Exception))state!;
+            request.Options.RequestExceptionOccurred?.Invoke(request, exception);
+        };
+
 
         /// <summary>
         /// The synchronization context captured upon construction for marshaling callbacks.
@@ -69,27 +112,7 @@ namespace Requests
         /// <summary>
         /// Current state of the request.
         /// </summary>
-        public virtual RequestState State
-        {
-            get => _state;
-            protected set
-            {
-                if (HasCompleted())
-                    return;
-
-                RequestState oldState = _state;
-                _state = value;
-
-                // Complete running task if we're no longer running
-                if (oldState == RequestState.Running && value != RequestState.Running)
-                {
-                    _runningCompletionSource.TrySetResult();
-                }
-
-                // Marshal state change to original context
-                SynchronizationContext.Post(_ => StateChanged?.Invoke(this, value), null);
-            }
-        }
+        public virtual RequestState State => _stateMachine.Current;
 
         /// <summary>
         /// Event raised when the request state changes.
@@ -113,8 +136,31 @@ namespace Requests
             Options = StartOptions with { };
             SynchronizationContext = SynchronizationContext.Current ?? Options.Handler.DefaultSynchronizationContext;
 
+            // Initialize state machine
+            _stateMachine = new RequestStateMachine(
+                RequestState.Paused,
+                OnStateChanged);
+
+            _runningSource.RunContinuationsAsynchronously = true;
+
             _requestCts = CreateCancellationTokenSource();
             _ctr = RegisterCancellation();
+        }
+
+
+        /// <summary>
+        /// Callback when state changes.
+        /// </summary>
+        private void OnStateChanged(RequestState oldState, RequestState newState)
+        {
+            // Complete running source if we're no longer running
+            if (oldState == RequestState.Running && newState != RequestState.Running)
+            {
+                _runningSource.SetResult(true);
+            }
+
+            // Marshal state change to original context
+            SynchronizationContext.Post(s_stateChangedCallback, (this, newState));
         }
 
         /// <summary>
@@ -127,7 +173,7 @@ namespace Requests
         /// <summary>
         /// Registers cancellation callback.
         /// </summary>
-        private CancellationTokenRegistration RegisterCancellation() => Token.UnsafeRegister(state =>
+        private CancellationTokenRegistration RegisterCancellation() => Token.UnsafeRegister(static state =>
         {
             Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
             request.HandleCancellation();
@@ -157,23 +203,20 @@ namespace Requests
         /// </summary>
         public virtual void Cancel()
         {
-            if (State == RequestState.Cancelled)
-                return;
+            if (!_stateMachine.TryTransition(RequestState.Cancelled))
+                return; // Already in terminal state
 
-            State = RequestState.Cancelled;
-
-            // Release pause semaphore to prevent deadlock
-            if (_pauseSemaphore.CurrentCount == 0)
-                _pauseSemaphore.Release();
+            // Signal any paused execution
+            Interlocked.Exchange(ref _pauseTcs, null)?.TrySetCanceled();
 
             if (!_disposed)
                 _requestCts.Cancel();
 
             _completionSource.TrySetCanceled();
-            _runningCompletionSource.TrySetCanceled();
+            _runningSource.SetException(new OperationCanceledException());
 
             // Marshal callback to original context
-            SynchronizationContext.Post(_ => Options.RequestCancelled?.Invoke(this), null);
+            SynchronizationContext.Post(s_requestCancelledCallback, this);
 
             Options.SubsequentRequest?.Cancel();
         }
@@ -192,7 +235,7 @@ namespace Requests
                 return;
             }
 
-            State = RequestState.Idle;
+            _stateMachine.TryTransition(RequestState.Idle);
             Options.Handler.RunRequests(this);
         }
 
@@ -204,7 +247,7 @@ namespace Requests
             if (State != RequestState.Running)
                 return;
 
-            State = RequestState.Paused;
+            _stateMachine.TryTransition(RequestState.Paused);
         }
 
         /// <summary>
@@ -212,11 +255,11 @@ namespace Requests
         /// </summary>
         private async Task WaitAndDeployAsync(TimeSpan delay)
         {
-            State = RequestState.Waiting;
+            _stateMachine.TryTransition(RequestState.Waiting);
 
             try
             {
-                await Task.Delay(delay, Token);
+                await Task.Delay(delay, Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -226,7 +269,7 @@ namespace Requests
             if (State != RequestState.Waiting)
                 return;
 
-            State = RequestState.Idle;
+            _stateMachine.TryTransition(RequestState.Idle);
             Options.Handler.RunRequests(this);
         }
 
@@ -235,29 +278,40 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            // Check if we're resuming a paused execution (something waiting on semaphore)
-            if (State == RequestState.Idle && _pauseSemaphore.CurrentCount == 0)
+            // Check if we're resuming a paused execution
+            if (_hasPausedExecution)
             {
-                // There's a paused execution waiting - create new completion source for this resume
-                _runningCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                // Get and clear the pause TCS atomically
+                TaskCompletionSource<bool>? tcs = Interlocked.Exchange(ref _pauseTcs, null);
+                if (tcs != null)
+                {
+                    _hasPausedExecution = false;
 
-                // Resume it
-                State = RequestState.Running;
-                _pauseSemaphore.Release();
+                    // Create new running source for this resume
+                    _runningSourceVersion++;
+                    _runningSource.Reset();
 
-                // Wait for the resumed execution to stop running (pause or complete)
-                await _runningCompletionSource.Task;
-                return;
+                    // Resume the paused execution
+                    _stateMachine.TryTransition(RequestState.Running);
+                    tcs.TrySetResult(true);
+
+                    // Wait for the resumed execution to stop running
+                    await new ValueTask(this, _runningSourceVersion).ConfigureAwait(false);
+                    return;
+                }
             }
 
-            // Fresh start - reset running task for this execution
-            _runningCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Fresh start, reset running source for this execution
+            _runningSourceVersion++;
+            _runningSource.Reset();
 
             // Start the execution in the background
-            _ = ExecuteInternalAsync();
+#pragma warning disable CS4014
+            ExecuteInternalAsync();
+#pragma warning restore CS4014
 
-            // Wait until we're no longer running (paused or completed)
-            await _runningCompletionSource.Task;
+            // Wait until we're no longer running
+            await new ValueTask(this, _runningSourceVersion).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -271,36 +325,32 @@ namespace Requests
             try
             {
                 // Entry checkpoint
-                await YieldAsync();
+                await YieldAsync().ConfigureAwait(false);
 
                 if (!ShouldExecute())
                     return;
 
-                State = RequestState.Running;
+                _stateMachine.TryTransition(RequestState.Running);
 
                 // Recreate CTS if we're restarting after handler cancellation
                 if (_requestCts.IsCancellationRequested && Options.CancellationToken?.IsCancellationRequested == false)
                 {
-                    await ResetCancellationTokenAsync();
+                    await ResetCancellationTokenAsync().ConfigureAwait(false);
                 }
 
                 // Marshal callback to original context
-                SynchronizationContext.Post(_ => Options.RequestStarted?.Invoke(this), null);
+                SynchronizationContext.Post(s_requestStartedCallback, this);
 
                 // Execute the request
-                RequestReturn result = await ExecuteRequestAsync();
+                RequestReturn result = await ExecuteRequestAsync().ConfigureAwait(false);
 
                 // Process the result
-                await ProcessResultAsync(result);
-            }
-            catch (OperationCanceledException)
-            {
-                // Cancellation is already handled
+                await ProcessResultAsync(result).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 AddException(ex);
-                await ProcessResultAsync(new RequestReturn { Successful = false });
+                await ProcessResultAsync(new RequestReturn { Successful = false }).ConfigureAwait(false);
             }
             finally
             {
@@ -311,6 +361,7 @@ namespace Requests
         /// <summary>
         /// Checks if the request should execute.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool ShouldExecute() =>
             State == RequestState.Idle
             && !Options.Handler.CancellationToken.IsCancellationRequested
@@ -321,7 +372,7 @@ namespace Requests
         /// </summary>
         private async Task ResetCancellationTokenAsync()
         {
-            await _ctr.DisposeAsync();
+            await _ctr.DisposeAsync().ConfigureAwait(false);
             _requestCts.Dispose();
             _requestCts = CreateCancellationTokenSource();
             _ctr = RegisterCancellation();
@@ -334,7 +385,7 @@ namespace Requests
         {
             try
             {
-                return await RunRequestAsync();
+                return await RunRequestAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -355,12 +406,12 @@ namespace Requests
 
             if (result.Successful)
             {
-                State = RequestState.Completed;
+                _stateMachine.TryTransition(RequestState.Completed);
                 _completionSource.TrySetResult();
 
                 if (result.CompletedReturn is not null)
                 {
-                    SynchronizationContext.Post(_ => Options.RequestCompleted?.Invoke(this, result.CompletedReturn), null);
+                    SynchronizationContext.Post(s_requestCompletedCallback, (this, result.CompletedReturn));
                 }
             }
             else
@@ -370,15 +421,15 @@ namespace Requests
                 // Check if request itself was cancelled
                 if (Options.CancellationToken?.IsCancellationRequested == true)
                 {
-                    State = RequestState.Cancelled;
+                    _stateMachine.TryTransition(RequestState.Cancelled);
                     _completionSource.TrySetCanceled();
                     return;
                 }
 
-                // Check if handler was cancelled - pause and wait for resume
+                // Check if handler was cancelled, pause and wait for resume
                 if (Options.Handler.CancellationToken.IsCancellationRequested)
                 {
-                    State = RequestState.Idle;
+                    _stateMachine.TryTransition(RequestState.Paused); // TODO: Not clear if Paused or Idle deciding later
                     return;
                 }
 
@@ -387,39 +438,67 @@ namespace Requests
                 {
                     if (Options.DelayBetweenAttemps.HasValue)
                     {
-                        await WaitAndDeployAsync(Options.DelayBetweenAttemps.Value);
+                        await WaitAndDeployAsync(Options.DelayBetweenAttemps.Value).ConfigureAwait(false);
                     }
                     else
                     {
-                        State = RequestState.Idle;
+                        _stateMachine.TryTransition(RequestState.Idle);
                         Options.Handler.RunRequests(this);
                     }
                     return;
                 }
 
                 // All retries exhausted
-                State = RequestState.Failed;
+                _stateMachine.TryTransition(RequestState.Failed);
                 _completionSource.TrySetResult();
 
                 if (result.FailedReturn is not null)
                 {
-                    SynchronizationContext.Post(_ => Options.RequestFailed?.Invoke(this, result.FailedReturn), null);
+                    SynchronizationContext.Post(s_requestFailedCallback, (this, result.FailedReturn));
                 }
             }
         }
 
         /// <summary>
         /// Yield point that respects pause and cancellation state.
+        /// Optimized for the common case where no pause/cancellation occurs.
+        /// Compatible with static Request.Yield() pattern.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task YieldAsync()
+        public ValueTask YieldAsync()
+        {
+            // Fast path: no cancellation, not paused
+            if (!Token.IsCancellationRequested && State != RequestState.Paused)
+                return ValueTask.CompletedTask;
+
+            // Slow path: need to check cancellation or wait on pause
+            return YieldAsyncSlow();
+        }
+
+        /// <summary>
+        /// Slow path for YieldAsync when pause or cancellation is involved.
+        /// IMPROVED: Lazy allocation of pause TCS, no race conditions.
+        /// </summary>
+        private async ValueTask YieldAsyncSlow()
         {
             Token.ThrowIfCancellationRequested();
 
             if (State == RequestState.Paused)
             {
-                // Wait for handler to resume us
-                await _pauseSemaphore.WaitAsync(Token);
+                // Lazy-create pause TCS only when actually pausing
+                TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _pauseTcs = tcs;
+                _hasPausedExecution = true;
+
+                // Signal we're no longer running
+                _runningSource.SetResult(true);
+
+                // Wait for resume
+                await tcs.Task.ConfigureAwait(false);
+
+                // We've been resumed, prepare new running source
+                _runningSourceVersion++;
+                _runningSource.Reset();
             }
         }
 
@@ -430,7 +509,7 @@ namespace Requests
         {
             _exceptions.Add(exception);
             Exception = new AggregateException(_exceptions);
-            SynchronizationContext.Post(_ => Options.RequestExceptionOccurred?.Invoke(this, exception), null);
+            SynchronizationContext.Post(s_requestExceptionCallback, (this, exception));
         }
 
         /// <summary>
@@ -441,8 +520,7 @@ namespace Requests
             if (HasCompleted())
                 return false;
 
-            State = RequestState.Idle;
-            return true;
+            return _stateMachine.TryTransition(RequestState.Idle);
         }
 
         /// <summary>
@@ -460,6 +538,7 @@ namespace Requests
         /// <summary>
         /// Checks if the request has reached a final state.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool HasCompleted() => State is RequestState.Completed or RequestState.Failed or RequestState.Cancelled;
 
         /// <summary>
@@ -476,7 +555,7 @@ namespace Requests
         /// Gets an awaiter that completes when the request is no longer running.
         /// Useful for waiting until a request is paused or completed.
         /// </summary>
-        public TaskAwaiter GetRunningAwaiter() => _runningCompletionSource.Task.GetAwaiter();
+        public ValueTaskAwaiter GetRunningAwaiter() => new ValueTask(this, _runningSourceVersion).GetAwaiter();
 
         /// <summary>
         /// Disposes the request and releases all resources.
@@ -493,9 +572,8 @@ namespace Requests
 
             _requestCts?.Dispose();
             _ctr.Dispose();
-            _pauseSemaphore?.Dispose();
             _completionSource.TrySetCanceled();
-            _runningCompletionSource.TrySetCanceled();
+            _pauseTcs?.TrySetCanceled();
 
             GC.SuppressFinalize(this);
         }
@@ -514,6 +592,13 @@ namespace Requests
         /// Contains the core logic of the request.
         /// </summary>
         protected abstract Task<RequestReturn> RunRequestAsync();
+
+        ValueTaskSourceStatus IValueTaskSource.GetStatus(short token) => _runningSource.GetStatus(token);
+
+        void IValueTaskSource.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) =>
+            _runningSource.OnCompleted(continuation, state, token, flags);
+
+        void IValueTaskSource.GetResult(short token) => _runningSource.GetResult(token);
 
         /// <summary>
         /// Encapsulates the return value and status of a request execution.
@@ -538,6 +623,7 @@ namespace Requests
             /// <summary>
             /// Creates a successful result.
             /// </summary>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static RequestReturn Success(TCompleted value) => new()
             {
                 Successful = true,
@@ -547,6 +633,7 @@ namespace Requests
             /// <summary>
             /// Creates a failed result.
             /// </summary>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static RequestReturn Failure(TFailed value) => new()
             {
                 Successful = false,
