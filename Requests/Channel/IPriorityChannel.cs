@@ -3,6 +3,13 @@
 namespace Requests.Channel
 {
     /// <summary>
+    /// Record that transport the item and the prority of the item
+    /// </summary>
+    /// <param name="Priority">Priority of the item</param>
+    /// <param name="Item">Item that the channel uses</param>
+    public record PriorityItem<TElement>(float Priority, TElement Item);
+
+    /// <summary>
     /// Represents a priority channel that allows reading and writing of items with associated priorities.
     /// </summary>
     /// <typeparam name="TElement">The type of elements in the channel.</typeparam>
