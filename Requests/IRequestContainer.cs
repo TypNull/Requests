@@ -14,11 +14,7 @@ namespace Requests
         /// </summary>
         int Count { get; }
 
-        /// <summary>
-        /// Represents a task that completes when all the requests currently available in the container have completed.
-        /// This task does not include requests that may be added to the container in the future.
-        /// </summary>
-        Task CurrentTask { get; }
+        Task WaitForCurrentRequestsAsync(CancellationToken cancellationToken);
 
         /// <summary>
         /// Incorporates a <see cref="IRequest"/> into the <see cref="IRequestContainer{TRequest}"/>.
