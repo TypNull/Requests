@@ -104,27 +104,31 @@ namespace UnitTest
         public async Task YieldAsync_WhenPaused_ShouldWaitForResume()
         {
             // Arrange
-            TaskCompletionSource<bool> tcs = new();
+            TaskCompletionSource<bool> pausedTcs = new();
             OwnRequest? capturedRequest = null;
             using OwnRequest request = CreateParallelRequest(async token =>
             {
-                tcs.SetResult(true);
-                await capturedRequest!.YieldAsync();
+                capturedRequest!.Pause();
+                pausedTcs.SetResult(true);
+                // This yield should wait because we're paused
+                await capturedRequest.YieldAsync();
                 return true;
             });
             capturedRequest = request;
 
-            await tcs.Task; // Wait for request to start
-
-            // Act
-            request.Pause();
-            ValueTask yieldTask = request.YieldAsync();
+            await pausedTcs.Task;
 
             // Assert
-            yieldTask.IsCompleted.Should().BeFalse("Should wait when paused");
+            request.State.Should().Be(RequestState.Paused);
+            await Task.Delay(200);
+            request.State.Should().Be(RequestState.Paused);
 
+            // Act 
             request.Start();
-            await Task.Delay(50); // Give time for resume
+            await Task.Delay(100); // Give time to complete
+
+            // Assert - should complete successfully
+            request.State.Should().Be(RequestState.Completed);
         }
 
         [Test]
