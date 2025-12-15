@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Collections;
+using System.Runtime.CompilerServices;
 
 namespace Requests.Channel
 {
@@ -17,6 +19,17 @@ namespace Requests.Channel
         private const int Arity = 4;
         /// <summary>The binary logarithm of <see cref="Arity"/>.</summary>
         private const int Log2Arity = 2;
+
+        /// <summary>Struct comparer to avoid delegate allocation during sorting.</summary>
+        private readonly struct ItemComparer : IComparer<(PriorityItem<TElement> Item, long Order)>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public int Compare((PriorityItem<TElement> Item, long Order) a, (PriorityItem<TElement> Item, long Order) b)
+            {
+                int priorityComparison = a.Item.Priority.CompareTo(b.Item.Priority);
+                return priorityComparison != 0 ? priorityComparison : a.Order.CompareTo(b.Order);
+            }
+        }
 
         /// <summary>Array-backed quaternary min-heap storing priority items.</summary>
         private PriorityItem<TElement>[] _nodes;
@@ -241,10 +254,11 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Copies the elements stored in the queue to a new array.
+        /// Copies the elements stored in the queue to a new array in heap order (unsorted).
+        /// This is a fast O(n) operation that returns the internal heap structure.
         /// </summary>
-        /// <returns>A new array containing a snapshot of elements from the queue.</returns>
-        public PriorityItem<TElement>[] ToArray()
+        /// <returns>A new array containing a snapshot of elements from the queue in heap order.</returns>
+        public PriorityItem<TElement>[] ToHeapArray()
         {
             lock (_lock)
             {
@@ -252,20 +266,46 @@ namespace Requests.Channel
 
                 PriorityItem<TElement>[] result = new PriorityItem<TElement>[_size];
                 Array.Copy(_nodes, 0, result, 0, _size);
-
-                // Sort by priority, then by insertion order for stability
-                Array.Sort(result, (a, b) =>
-                {
-                    int priorityComparison = a.Priority.CompareTo(b.Priority);
-                    if (priorityComparison != 0) return priorityComparison;
-
-                    // For items with same priority, maintain insertion order
-                    int aIndex = FindInsertionIndex(a);
-                    int bIndex = FindInsertionIndex(b);
-                    return aIndex.CompareTo(bIndex);
-                });
-
                 return result;
+            }
+        }
+
+        /// <summary>
+        /// Copies the elements stored in the queue to a new array in priority order (sorted).
+        /// This is an O(n log n) operation. Uses ArrayPool to reduce GC pressure.
+        /// </summary>
+        /// <returns>A new array containing elements sorted by priority.</returns>
+        public PriorityItem<TElement>[] ToArray()
+        {
+            (PriorityItem<TElement> Item, long Order)[] buffer;
+            int count;
+
+            lock (_lock)
+            {
+                count = _size;
+                if (count == 0) return [];
+
+                buffer = ArrayPool<(PriorityItem<TElement>, long)>.Shared.Rent(count);
+                for (int i = 0; i < count; i++)
+                {
+                    buffer[i] = (_nodes[i], _insertionOrder[i]);
+                }
+            }
+
+            try
+            {
+                buffer.AsSpan(0, count).Sort(default(ItemComparer));
+
+                PriorityItem<TElement>[] result = new PriorityItem<TElement>[count];
+                for (int i = 0; i < count; i++)
+                {
+                    result[i] = buffer[i].Item;
+                }
+                return result;
+            }
+            finally
+            {
+                ArrayPool<(PriorityItem<TElement>, long)>.Shared.Return(buffer, clearArray: true);
             }
         }
 
@@ -295,21 +335,41 @@ namespace Requests.Channel
         }
 
         /// <summary>
-        /// Returns an enumerator that iterates through the queue in heap order (not priority order).
+        /// Returns an enumerator that iterates through the queue in priority order (sorted).
+        /// Uses ArrayPool for reduced GC pressure. This is an O(n log n) operation.
         /// </summary>
-        /// <returns>An enumerator for the queue.</returns>
+        /// <returns>An enumerator for the queue in priority order.</returns>
         public IEnumerator<PriorityItem<TElement>> GetEnumerator()
         {
-            PriorityItem<TElement>[] snapshot;
+            (PriorityItem<TElement> Item, long Order)[] rentedArray;
+            int count;
+
             lock (_lock)
             {
-                snapshot = new PriorityItem<TElement>[_size];
-                Array.Copy(_nodes, 0, snapshot, 0, _size);
+                count = _size;
+                if (count == 0) yield break;
+
+                // Rent from pool to reduce GC pressure
+                rentedArray = ArrayPool<(PriorityItem<TElement>, long)>.Shared.Rent(count);
+
+                // Copy data while holding lock
+                for (int i = 0; i < count; i++)
+                {
+                    rentedArray[i] = (_nodes[i], _insertionOrder[i]);
+                }
             }
 
-            foreach (PriorityItem<TElement> item in snapshot)
+            try
             {
-                if (item != null) yield return item;
+                rentedArray.AsSpan(0, count).Sort(default(ItemComparer));
+                for (int i = 0; i < count; i++)
+                {
+                    yield return rentedArray[i].Item;
+                }
+            }
+            finally
+            {
+                ArrayPool<(PriorityItem<TElement>, long)>.Shared.Return(rentedArray, clearArray: true);
             }
         }
 
@@ -504,24 +564,6 @@ namespace Requests.Channel
                     (item != null && item.Equals(_nodes[i])))
                 {
                     return i;
-                }
-            }
-            return -1;
-        }
-
-        /// <summary>
-        /// Finds the insertion index for a given item (used for sorting).
-        /// </summary>
-        /// <param name="item">The item to find insertion index for.</param>
-        /// <returns>The insertion index, or -1 if not found.</returns>
-        private int FindInsertionIndex(PriorityItem<TElement> item)
-        {
-            for (int i = 0; i < _size; i++)
-            {
-                if (ReferenceEquals(_nodes[i], item) ||
-                    (item != null && item.Equals(_nodes[i])))
-                {
-                    return (int)_insertionOrder[i];
                 }
             }
             return -1;

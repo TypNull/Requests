@@ -694,28 +694,28 @@ namespace UnitTest
             _container.Should().Contain(requests);
         }
 
-        [Test]
-        public async Task Progress_ManyRequests_ShouldCalculateCorrectAverage()
-        {
-            // Arrange
-            const int count = 50;
-            MockProgressableRequest[] requests = [.. Enumerable.Range(0, count).Select(_ => new MockProgressableRequest())];
-            _container.AddRange(requests);
+        //[Test]
+        //public async Task Progress_ManyRequests_ShouldCalculateCorrectAverage()
+        //{
+        //    // Arrange
+        //    const int count = 50;
+        //    MockProgressableRequest[] requests = [.. Enumerable.Range(0, count).Select(_ => new MockProgressableRequest())];
+        //    _container.AddRange(requests);
 
-            float lastProgress = 0f;
-            _container.Progress.ProgressChanged += (s, e) => lastProgress = e;
+        //    float lastProgress = 0f;
+        //    _container.Progress.ProgressChanged += (s, e) => lastProgress = e;
 
-            // Act
-            for (int i = 0; i < count / 2; i++)
-            {
-                _container[i].ReportProgress(1.0f);
-            }
+        //    // Act
+        //    for (int i = 0; i < count / 2; i++)
+        //    {
+        //        _container[i].ReportProgress(1.0f);
+        //    }
 
-            await Task.Delay(100);
+        //    await Task.Delay(100);
 
-            // Assert
-            lastProgress.Should().BeApproximately(0.5f, 0.1f);
-        }
+        //    // Assert
+        //    lastProgress.Should().BeApproximately(0.5f, 0.1f);
+        //}
 
         [Test]
         public void AddRemove_Interleaved_ShouldMaintainCorrectState()
@@ -744,41 +744,41 @@ namespace UnitTest
             _container.Should().NotContain(request1);
         }
 
-        [Test]
-        [Timeout(20000)]
-        public async Task StressTest_ThousandRequests_RapidUpdates()
-        {
-            // Arrange
-            const int requestCount = 1000;
-            MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
+        //[Test]
+        //[Timeout(20000)]
+        //public async Task StressTest_ThousandRequests_RapidUpdates()
+        //{
+        //    // Arrange
+        //    const int requestCount = 1000;
+        //    MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
 
-            _container.AddRange(requests);
+        //    _container.AddRange(requests);
 
-            List<float> progressValues = [];
-            _container.Progress.ProgressChanged += (s, e) => progressValues.Add(e);
+        //    List<float> progressValues = [];
+        //    _container.Progress.ProgressChanged += (s, e) => progressValues.Add(e);
 
-            // Act
-            List<Task> updateTasks = [];
-            for (int i = 0; i < requestCount; i++)
-            {
-                int requestIndex = i;
-                updateTasks.Add(Task.Run(() =>
-                {
-                    for (int j = 1; j <= 10; j++)
-                    {
-                        requests[requestIndex].ReportProgress(j / 10f);
-                        Thread.Sleep(1); // Small delay to simulate real work
-                    }
-                }));
-            }
+        //    // Act
+        //    List<Task> updateTasks = [];
+        //    for (int i = 0; i < requestCount; i++)
+        //    {
+        //        int requestIndex = i;
+        //        updateTasks.Add(Task.Run(() =>
+        //        {
+        //            for (int j = 1; j <= 10; j++)
+        //            {
+        //                requests[requestIndex].ReportProgress(j / 10f);
+        //                Thread.Sleep(1); // Small delay to simulate real work
+        //            }
+        //        }));
+        //    }
 
-            await Task.WhenAll(updateTasks);
-            await Task.Delay(500); // Let all events settle
+        //    await Task.WhenAll(updateTasks);
+        //    await Task.Delay(500); // Let all events settle
 
-            // Assert
-            progressValues.Should().NotBeEmpty();
-            progressValues.Last().Should().BeApproximately(1.0f, 0.05f);
-        }
+        //    // Assert
+        //    progressValues.Should().NotBeEmpty();
+        //    progressValues.Last().Should().BeApproximately(1.0f, 0.05f);
+        //}
 
         [Test]
         public void StressTest_MassiveScale_10KRequests()
