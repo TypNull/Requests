@@ -76,9 +76,9 @@ namespace Requests
                 // From Waiting
                 (RequestState.Waiting, RequestState.Idle or RequestState.Cancelled) => true,
 
-                // From Running (most flexible state)
-                (RequestState.Running, RequestState.Paused or RequestState.Completed
-                    or RequestState.Failed or RequestState.Cancelled or RequestState.Idle) => true,
+                // From Running can transition to any state except Running itself
+                (RequestState.Running, RequestState.Running) => false,
+                (RequestState.Running, _) => true,
 
                 // Invalid transitions
                 _ => false

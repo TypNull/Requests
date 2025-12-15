@@ -8,12 +8,16 @@ namespace UnitTest
     {
         private TestRequest _request = null!;
         private RequestOptions<string, Exception> _options = null!;
+        private ParallelRequestHandler _handler = null!;
 
         [SetUp]
         public void SetUp()
         {
+            _handler = new ParallelRequestHandler();
+
             _options = new RequestOptions<string, Exception>
             {
+                Handler = _handler,
                 NumberOfAttempts = 3,
                 Priority = RequestPriority.High,
                 DelayBetweenAttemps = TimeSpan.FromMilliseconds(10),
@@ -26,6 +30,7 @@ namespace UnitTest
         public void TearDown()
         {
             _request?.Dispose();
+            _handler?.Dispose();
         }
 
         #region Test Helper Class
@@ -72,8 +77,12 @@ namespace UnitTest
         [Test]
         public void Constructor_NullOptions_ShouldUseDefaults()
         {
+            // Arrange
+            using ParallelRequestHandler handler = new();
+            RequestOptions<string, Exception> options = new() { Handler = handler, AutoStart = false };
+
             // Act
-            TestRequest request = new(null);
+            TestRequest request = new(options);
 
             // Assert
             request.Should().NotBeNull();
@@ -107,10 +116,13 @@ namespace UnitTest
         }
 
         [Test]
-        public void Pause_IdleRequest_ShouldTransitionToPaused()
+        public async Task Pause_RunningRequest_ShouldTransitionToPaused()
         {
             // Arrange
+            _request.ShouldSucceed = true;
             _request.Start();
+
+            await Task.Delay(10);
 
             // Act
             _request.Pause();
@@ -173,7 +185,7 @@ namespace UnitTest
             _request.Start();
             await _request.Task;
             Debug.WriteLine("Finished");
-            
+
             // Assert
             _request.State.Should().Be(RequestState.Failed);
             _request.Exception.Should().NotBeNull();
@@ -189,15 +201,31 @@ namespace UnitTest
         {
             // Arrange
             List<RequestState> stateChanges = new();
-            _request.StateChanged += (sender, state) => stateChanges.Add(state);
+            TaskCompletionSource<bool> idleEventFired = new();
+            TaskCompletionSource<bool> runningEventFired = new();
+
+            _request.StateChanged += (sender, state) =>
+            {
+                stateChanges.Add(state);
+                if (state == RequestState.Idle) idleEventFired.TrySetResult(true);
+                if (state == RequestState.Running) runningEventFired.TrySetResult(true);
+            };
 
             // Act
             _request.Start();
+
+            // Wait for events to fire (with timeout)
+            await Task.WhenAny(idleEventFired.Task, Task.Delay(500));
+            await Task.WhenAny(runningEventFired.Task, Task.Delay(500));
+
             await _request.Task;
 
+            // Give events time to be marshaled through SynchronizationContext
+            await Task.Delay(50);
+
             // Assert
-            stateChanges.Should().Contain(RequestState.Idle);
-            stateChanges.Should().Contain(RequestState.Running);
+            stateChanges.Should().Contain(RequestState.Idle, "request should transition to Idle when started");
+            stateChanges.Should().Contain(RequestState.Running, "request should transition to Running when picked up by handler");
             stateChanges.Should().ContainInOrder(RequestState.Idle, RequestState.Running);
         }
 

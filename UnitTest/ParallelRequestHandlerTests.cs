@@ -84,7 +84,7 @@ namespace UnitTest
         {
             // Arrange
             _handler.Pause();
-            _handler.AddRange(CreateTestRequest(), CreateTestRequest());
+            _handler.AddRange(CreateTestRequest(autoStart: false), CreateTestRequest(autoStart: false));
 
             // Act
             bool result = _handler.TrySetIdle();
@@ -112,7 +112,8 @@ namespace UnitTest
         public void Add_SingleRequest_ShouldIncreaseCount()
         {
             // Arrange
-            OwnRequest request = CreateTestRequest();
+            _handler.Pause(); // Pause to prevent immediate execution
+            OwnRequest request = CreateTestRequest(autoStart: false);
 
             // Act
             _handler.Add(request);
@@ -128,7 +129,7 @@ namespace UnitTest
         public void AddRange_MultipleRequests_ShouldIncreaseCount()
         {
             // Arrange
-            OwnRequest[] requests = new[] { CreateTestRequest(), CreateTestRequest() };
+            OwnRequest[] requests = [CreateTestRequest(autoStart: false), CreateTestRequest(autoStart: false)];
 
             // Act
             _handler.AddRange(requests);
@@ -146,7 +147,7 @@ namespace UnitTest
         {
             // Arrange
             _handler.Pause(); // Pause to prevent immediate execution
-            OwnRequest request = CreateTestRequest();
+            OwnRequest request = CreateTestRequest(autoStart: false);
             _handler.Add(request);
 
             // Act
@@ -163,7 +164,7 @@ namespace UnitTest
         public void Remove_NonExistingRequest_ShouldReturnFalse()
         {
             // Arrange
-            OwnRequest request = CreateTestRequest();
+            OwnRequest request = CreateTestRequest(autoStart: false);
 
             // Act & Assert
             // Remove throws InvalidOperationException when request doesn't exist
@@ -245,7 +246,7 @@ namespace UnitTest
         {
             // Arrange
             _handler.Pause();
-            OwnRequest[] requests = [CreateTestRequest(), CreateTestRequest()];
+            OwnRequest[] requests = [CreateTestRequest(autoStart: false), CreateTestRequest(autoStart: false)];
             _handler.AddRange(requests);
 
             // Act
@@ -288,7 +289,8 @@ namespace UnitTest
         public void HasCompleted_CancelledHandlerWithRequests_ShouldReturnFalse()
         {
             // Arrange
-            OwnRequest request = CreateTestRequest();
+            _handler.Pause(); // Pause to keep request in queue
+            OwnRequest request = CreateTestRequest(autoStart: false);
             _handler.Add(request);
             _handler.Cancel();
 
@@ -310,12 +312,16 @@ namespace UnitTest
 
         #region Helper Methods
 
-        private OwnRequest CreateTestRequest()
+        private OwnRequest CreateTestRequest(bool autoStart = true)
         {
             return new OwnRequest(async (token) =>
             {
                 await Task.Delay(10, token);
                 return true;
+            }, new RequestOptions<object, object>
+            {
+                Handler = _handler,  // Use the test's handler, NOT the shared static one!
+                AutoStart = autoStart
             });
         }
 
