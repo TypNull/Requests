@@ -77,7 +77,7 @@ namespace Requests.Channel
                 finally { throttler.Release(); }
             }).ContinueWith(task =>
             {
-                Options.DegreeOfParallelismChangedDelta -= (object? sender, int delta) => OnParallelismChanged(delta, throttler);
+                Options.DegreeOfParallelismChangedDelta -= (sender, delta) => OnParallelismChanged(delta, throttler);
                 return task;
             }, default, TaskContinuationOptions.DenyChildAttach, TaskScheduler.Default)
                 .Unwrap();
@@ -373,7 +373,7 @@ namespace Requests.Channel
         /// Creates an array out of the actual members of this Channel
         /// </summary>
         /// <returns>An array of T</returns>
-        public PriorityItem<TElement>[] ToArray() => _priorityQueue.ToArray();
+        public PriorityItem<TElement>[] ToArray() => [.. _priorityQueue];
 
         /// <summary>Gets the object used to synchronize access to all state on this instance.</summary>
         private object SyncObj => _priorityQueue;

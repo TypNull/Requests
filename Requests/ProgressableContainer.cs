@@ -30,7 +30,7 @@ namespace Requests
         /// <returns>A new merged container.</returns>
         public static ProgressableContainer<TRequest> MergeContainers(params ProgressableContainer<TRequest>[] requestContainers)
         {
-            ProgressableContainer<TRequest> container = new();
+            ProgressableContainer<TRequest> container = [];
             Array.ForEach(requestContainers, requestContainer => container.AddRange([.. requestContainer]));
             return container;
         }

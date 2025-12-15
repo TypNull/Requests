@@ -12,7 +12,7 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _container = new ProgressableContainer<MockProgressableRequest>();
+            _container = [];
         }
 
         [TearDown]
@@ -29,7 +29,7 @@ namespace UnitTest
         /// </summary>
         private class MockProgressableRequest : IProgressableRequest
         {
-            private TaskCompletionSource<bool> _tcs = new();
+            private readonly TaskCompletionSource<bool> _tcs = new();
 
             public Task Task => _tcs.Task;
             public RequestState State { get; private set; } = RequestState.Idle;
@@ -110,7 +110,7 @@ namespace UnitTest
         public void Constructor_Default_ShouldInitializeEmpty()
         {
             // Arrange & Act
-            using ProgressableContainer<MockProgressableRequest> container = new();
+            using ProgressableContainer<MockProgressableRequest> container = [];
 
             // Assert
             container.Should().NotBeNull();
@@ -140,7 +140,7 @@ namespace UnitTest
             MockProgressableRequest[] requests = [new(), new(), new()];
 
             // Act
-            using ProgressableContainer<MockProgressableRequest> container = new(requests);
+            using ProgressableContainer<MockProgressableRequest> container = [.. requests];
 
             // Assert
             container.Count.Should().Be(3);
@@ -459,7 +459,7 @@ namespace UnitTest
             _container.Add(request);
 
             // Act
-            bool result = _container.TrySetIdle();
+            _ = _container.TrySetIdle();
 
             // Assert
             request.State.Should().Be(RequestState.Idle);
@@ -518,8 +518,8 @@ namespace UnitTest
         public void MergeContainers_EmptyContainers_ShouldReturnEmpty()
         {
             // Arrange
-            using ProgressableContainer<MockProgressableRequest> container1 = new();
-            using ProgressableContainer<MockProgressableRequest> container2 = new();
+            using ProgressableContainer<MockProgressableRequest> container1 = [];
+            using ProgressableContainer<MockProgressableRequest> container2 = [];
 
             // Act
             using ProgressableContainer<MockProgressableRequest> merged = ProgressableContainer<MockProgressableRequest>.MergeContainers(container1, container2);
@@ -533,7 +533,7 @@ namespace UnitTest
         {
             // Arrange
             using ProgressableContainer<MockProgressableRequest> container1 = new(new MockProgressableRequest());
-            using ProgressableContainer<MockProgressableRequest> container2 = new();
+            using ProgressableContainer<MockProgressableRequest> container2 = [];
             using ProgressableContainer<MockProgressableRequest> container3 = new(new MockProgressableRequest());
 
             // Act
@@ -555,7 +555,7 @@ namespace UnitTest
             _container.AddRange(requests);
 
             // Act
-            List<MockProgressableRequest> enumerated = _container.ToList();
+            List<MockProgressableRequest> enumerated = [.. _container];
 
             // Assert
             enumerated.Should().HaveCount(3);
@@ -566,7 +566,7 @@ namespace UnitTest
         public void GetEnumerator_Empty_ShouldEnumerateNone()
         {
             // Act
-            List<MockProgressableRequest> enumerated = _container.ToList();
+            List<MockProgressableRequest> enumerated = [.. _container];
 
             // Assert
             enumerated.Should().BeEmpty();
@@ -684,9 +684,7 @@ namespace UnitTest
         {
             // Arrange
             const int count = 100;
-            MockProgressableRequest[] requests = Enumerable.Range(0, count)
-                .Select(_ => new MockProgressableRequest())
-                .ToArray();
+            MockProgressableRequest[] requests = [.. Enumerable.Range(0, count).Select(_ => new MockProgressableRequest())];
 
             // Act
             _container.AddRange(requests);
@@ -787,7 +785,7 @@ namespace UnitTest
         {
             // Arrange
             const int requestCount = 10000;
-            using ProgressableContainer<MockProgressableRequest> largeContainer = new();
+            using ProgressableContainer<MockProgressableRequest> largeContainer = [];
 
             MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
 

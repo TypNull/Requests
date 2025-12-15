@@ -12,7 +12,7 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _handler = new SequentialRequestHandler();
+            _handler = [];
         }
 
         [TearDown]
@@ -77,9 +77,7 @@ namespace UnitTest
 
                 try
                 {
-                    bool result = _action != null
-                        ? await _action(CancellationToken.None)
-                        : true;
+                    bool result = _action == null || await _action(CancellationToken.None);
 
                     if (result)
                     {
@@ -128,7 +126,7 @@ namespace UnitTest
         public void Constructor_Default_ShouldInitializeCorrectly()
         {
             // Arrange & Act
-            using SequentialRequestHandler handler = new();
+            using SequentialRequestHandler handler = [];
 
             // Assert
             handler.Should().NotBeNull();
@@ -144,7 +142,7 @@ namespace UnitTest
             MockSequentialRequest[] requests = [new(), new()];
 
             // Act
-            using SequentialRequestHandler handler = new(requests);
+            using SequentialRequestHandler handler = [.. requests];
 
             // Assert
             handler.Count.Should().Be(2);
@@ -629,12 +627,10 @@ namespace UnitTest
         {
             // Arrange
             const int count = 50;
-            List<MockSequentialRequest> requests = Enumerable.Range(0, count)
-                .Select(_ => new MockSequentialRequest())
-                .ToList();
+            List<MockSequentialRequest> requests = [.. Enumerable.Range(0, count).Select(_ => new MockSequentialRequest())];
 
             // Act
-            _handler.AddRange(requests.ToArray());
+            _handler.AddRange([.. requests]);
             await Task.Delay(2000); // Give time to process
 
             // Assert

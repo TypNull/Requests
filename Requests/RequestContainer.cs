@@ -121,9 +121,9 @@ namespace Requests
         /// <returns>Returns a new <see cref="RequestContainer{TRequest}"/> instance.</returns>
         public static RequestContainer<TRequest> MergeContainers(params RequestContainer<TRequest>[] requestContainers)
         {
-            RequestContainer<TRequest> newContainer = new();
+            RequestContainer<TRequest> newContainer = [];
             foreach (RequestContainer<TRequest> container in requestContainers)
-                newContainer.AddRange(container.ToArray());
+                newContainer.AddRange([.. container]);
             return newContainer;
         }
 

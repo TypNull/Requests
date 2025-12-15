@@ -11,7 +11,7 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _handler = new ParallelRequestHandler();
+            _handler = [];
         }
 
         [TearDown]

@@ -13,7 +13,7 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _handler = new ParallelRequestHandler();
+            _handler = [];
 
             _options = new RequestOptions<string, Exception>
             {
@@ -78,7 +78,7 @@ namespace UnitTest
         public void Constructor_NullOptions_ShouldUseDefaults()
         {
             // Arrange
-            using ParallelRequestHandler handler = new();
+            using ParallelRequestHandler handler = [];
             RequestOptions<string, Exception> options = new() { Handler = handler, AutoStart = false };
 
             // Act
@@ -200,7 +200,7 @@ namespace UnitTest
         public async Task StateChanged_DuringExecution_ShouldFireEvents()
         {
             // Arrange
-            List<RequestState> stateChanges = new();
+            List<RequestState> stateChanges = [];
             TaskCompletionSource<bool> idleEventFired = new();
             TaskCompletionSource<bool> runningEventFired = new();
 

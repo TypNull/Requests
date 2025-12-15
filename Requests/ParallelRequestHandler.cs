@@ -11,7 +11,7 @@ namespace Requests
     /// </summary>
     public class ParallelRequestHandler : IRequestHandler, IAsyncEnumerable<IRequest>
     {
-        private readonly IPriorityChannel<IRequest> _requestsChannel;
+        private readonly DynamicPriorityChannel<IRequest> _requestsChannel;
         private readonly RequestContainerStateMachine _stateMachine;
         private bool _disposed;
         private RequestPriority _priority;

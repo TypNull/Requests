@@ -390,7 +390,7 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
         if (State != RequestState.Paused)
             return false;
 
-        PriorityItem<IRequest>[] requests = _requestQueue.ToArray();
+        PriorityItem<IRequest>[] requests = [.. _requestQueue];
 
         foreach (PriorityItem<IRequest> priorityItem in requests)
             _ = priorityItem.Item.TrySetIdle();

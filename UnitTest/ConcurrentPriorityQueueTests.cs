@@ -212,21 +212,21 @@ namespace UnitTest
         public void PriorityOrdering_MultipleItems_ShouldMaintainCorrectOrder()
         {
             // Arrange
-            PriorityItem<int>[] items = new[]
-            {
+            PriorityItem<int>[] items =
+            [
                 new PriorityItem<int>(5.0f, 5),
                 new PriorityItem<int>(1.0f, 1),
                 new PriorityItem<int>(3.0f, 3),
                 new PriorityItem<int>(2.0f, 2),
                 new PriorityItem<int>(4.0f, 4)
-            };
+            ];
             ConcurrentPriorityQueue<int> queue = new();
 
             // Act
             foreach (PriorityItem<int>? item in items)
                 queue.Enqueue(item);
 
-            List<int> results = new();
+            List<int> results = [];
             while (!queue.IsEmpty)
                 results.Add(queue.Dequeue().Item);
 
@@ -238,21 +238,21 @@ namespace UnitTest
         public void StablePriorityOrdering_SamePriorityItems_ShouldMaintainFIFOOrder()
         {
             // Arrange
-            PriorityItem<string>[] items = new[]
-            {
+            PriorityItem<string>[] items =
+            [
                 new PriorityItem<string>(2.0f, "first"),
                 new PriorityItem<string>(2.0f, "second"),
                 new PriorityItem<string>(2.0f, "third"),
                 new PriorityItem<string>(1.0f, "highest"),
                 new PriorityItem<string>(2.0f, "fourth")
-            };
+            ];
             ConcurrentPriorityQueue<string> queue = new();
 
             // Act
             foreach (PriorityItem<string>? item in items)
                 queue.Enqueue(item);
 
-            List<string> results = new();
+            List<string> results = [];
             while (!queue.IsEmpty)
                 results.Add(queue.Dequeue().Item);
 
@@ -316,7 +316,7 @@ namespace UnitTest
         {
             // Arrange
             const int itemCount = 1000;
-            ConcurrentBag<int> dequeueResults = new();
+            ConcurrentBag<int> dequeueResults = [];
             ConcurrentPriorityQueue<int> queue = new();
 
             for (int i = 0; i < itemCount; i++)
@@ -325,14 +325,14 @@ namespace UnitTest
             }
 
             // Act
-            Task[] tasks = Enumerable.Range(0, 10).Select(_ => Task.Run(() =>
+            Task[] tasks = [.. Enumerable.Range(0, 10).Select(_ => Task.Run(() =>
             {
                 while (queue.TryDequeue(out PriorityItem<int>? item))
                 {
                     dequeueResults.Add(item.Item);
                     Thread.Sleep(1);
                 }
-            })).ToArray();
+            }))];
 
             Task.WaitAll(tasks);
 
@@ -349,7 +349,7 @@ namespace UnitTest
             const int operationsPerThread = 50;
             ConcurrentPriorityQueue<int> queue = new();
             Task[] tasks = new Task[4];
-            ConcurrentBag<Exception> exceptions = new();
+            ConcurrentBag<Exception> exceptions = [];
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10)); // 10 second timeout
 
             // Act
@@ -458,9 +458,7 @@ namespace UnitTest
         {
             // Arrange
             const int itemCount = 5000;
-            List<PriorityItem<int>> items = Enumerable.Range(0, itemCount)
-                .Select(i => new PriorityItem<int>(Random.Shared.NextSingle() * 1000, i))
-                .ToList();
+            List<PriorityItem<int>> items = [.. Enumerable.Range(0, itemCount).Select(i => new PriorityItem<int>(Random.Shared.NextSingle() * 1000, i))];
 
             // Test optimized queue
             ConcurrentPriorityQueue<int> optimizedQueue = new();
@@ -476,7 +474,7 @@ namespace UnitTest
             long optimizedTime = stopwatch.ElapsedMilliseconds;
 
             // Test naive approach
-            List<PriorityItem<int>> naiveList = new();
+            List<PriorityItem<int>> naiveList = [];
             stopwatch.Restart();
 
             foreach (PriorityItem<int>? item in items)
@@ -585,9 +583,7 @@ namespace UnitTest
         public void TryRemove_RootItem_ShouldMaintainHeapProperty()
         {
             // Arrange
-            PriorityItem<int>[] items = Enumerable.Range(1, 10)
-                .Select(i => new PriorityItem<int>(i, i))
-                .ToArray();
+            PriorityItem<int>[] items = [.. Enumerable.Range(1, 10).Select(i => new PriorityItem<int>(i, i))];
             ConcurrentPriorityQueue<int> queue = new();
 
             foreach (PriorityItem<int>? item in items)
@@ -629,7 +625,7 @@ namespace UnitTest
         public void ToArray_PopulatedQueue_ShouldReturnSortedArray()
         {
             // Arrange
-            float[] priorities = new[] { 5.0f, 1.0f, 3.0f, 2.0f, 4.0f };
+            float[] priorities = [5.0f, 1.0f, 3.0f, 2.0f, 4.0f];
             ConcurrentPriorityQueue<int> queue = new();
 
             for (int i = 0; i < priorities.Length; i++)
@@ -638,7 +634,7 @@ namespace UnitTest
             }
 
             // Act
-            PriorityItem<int>[] array = queue.ToArray();
+            PriorityItem<int>[] array = [.. queue];
 
             // Assert
             array.Should().HaveCount(5);
@@ -653,7 +649,7 @@ namespace UnitTest
         public void ToArray_EmptyQueue_ShouldReturnEmptyArray()
         {
             // Act
-            PriorityItem<string>[] array = _queue.ToArray();
+            PriorityItem<string>[] array = [.. _queue];
 
             // Assert
             array.Should().BeEmpty();
@@ -690,18 +686,18 @@ namespace UnitTest
         public void GetEnumerator_PopulatedQueue_ShouldReturnAllItems()
         {
             // Arrange
-            PriorityItem<string>[] items = new[]
-            {
+            PriorityItem<string>[] items =
+            [
                 new PriorityItem<string>(1.0f, "first"),
                 new PriorityItem<string>(2.0f, "second"),
                 new PriorityItem<string>(3.0f, "third")
-            };
+            ];
 
             foreach (PriorityItem<string>? item in items)
                 _queue.Enqueue(item);
 
             // Act
-            List<PriorityItem<string>> enumeratedItems = _queue.ToList();
+            List<PriorityItem<string>> enumeratedItems = [.. _queue];
 
             // Assert
             enumeratedItems.Should().HaveCount(3);
@@ -715,7 +711,7 @@ namespace UnitTest
         public void GetEnumerator_EmptyQueue_ShouldReturnNoItems()
         {
             // Act
-            List<PriorityItem<string>> enumeratedItems = _queue.ToList();
+            List<PriorityItem<string>> enumeratedItems = [.. _queue];
 
             // Assert
             enumeratedItems.Should().BeEmpty();
@@ -732,7 +728,7 @@ namespace UnitTest
             IEnumerator<PriorityItem<string>> enumerator = _queue.GetEnumerator();
             PriorityItem<string> item2 = new(2.0f, "test2");
             _queue.Enqueue(item2);
-            List<PriorityItem<string>> items = new();
+            List<PriorityItem<string>> items = [];
 
             while (enumerator.MoveNext())
             {

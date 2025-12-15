@@ -13,8 +13,8 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _parallelHandler = new ParallelRequestHandler();
-            _sequentialHandler = new SequentialRequestHandler();
+            _parallelHandler = [];
+            _sequentialHandler = [];
         }
 
         [TearDown]

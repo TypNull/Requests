@@ -248,7 +248,7 @@ namespace Requests.Channel
         {
             lock (_lock)
             {
-                if (_size == 0) return Array.Empty<PriorityItem<TElement>>();
+                if (_size == 0) return [];
 
                 PriorityItem<TElement>[] result = new PriorityItem<TElement>[_size];
                 Array.Copy(_nodes, 0, result, 0, _size);

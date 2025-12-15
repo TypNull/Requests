@@ -12,7 +12,7 @@ namespace UnitTest
         [SetUp]
         public void SetUp()
         {
-            _container = new RequestContainer<MockRequest>();
+            _container = [];
         }
 
         [TearDown]
@@ -29,7 +29,7 @@ namespace UnitTest
         /// </summary>
         private class MockRequest : IRequest
         {
-            private TaskCompletionSource<bool> _tcs = new();
+            private readonly TaskCompletionSource<bool> _tcs = new();
 
             public Task Task => _tcs.Task;
             public RequestState State
@@ -108,7 +108,7 @@ namespace UnitTest
         public void Constructor_Default_ShouldInitializeEmpty()
         {
             // Arrange & Act
-            using RequestContainer<MockRequest> container = new();
+            using RequestContainer<MockRequest> container = [];
 
             // Assert
             container.Should().NotBeNull();
@@ -137,7 +137,7 @@ namespace UnitTest
             MockRequest[] requests = [new(), new(), new()];
 
             // Act
-            using RequestContainer<MockRequest> container = new(requests);
+            using RequestContainer<MockRequest> container = [.. requests];
 
             // Assert
             container.Count.Should().Be(3);
@@ -329,7 +329,7 @@ namespace UnitTest
             _container.Add(request);
 
             // Act
-            bool result = _container.TrySetIdle();
+            _ = _container.TrySetIdle();
 
             // Assert
             request.State.Should().Be(RequestState.Idle);
@@ -423,7 +423,7 @@ namespace UnitTest
             _container.AddRange(requests);
 
             // Act
-            List<MockRequest> enumerated = _container.ToList();
+            List<MockRequest> enumerated = [.. _container];
 
             // Assert
             enumerated.Should().HaveCount(3);
@@ -434,7 +434,7 @@ namespace UnitTest
         public void GetEnumerator_Empty_ShouldEnumerateNone()
         {
             // Act
-            List<MockRequest> enumerated = _container.ToList();
+            List<MockRequest> enumerated = [.. _container];
 
             // Assert
             enumerated.Should().BeEmpty();
@@ -598,9 +598,7 @@ namespace UnitTest
         {
             // Arrange
             const int count = 100;
-            MockRequest[] requests = Enumerable.Range(0, count)
-                .Select(_ => new MockRequest())
-                .ToArray();
+            MockRequest[] requests = [.. Enumerable.Range(0, count).Select(_ => new MockRequest())];
 
             // Act
             _container.AddRange(requests);
