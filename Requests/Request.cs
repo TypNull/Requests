@@ -6,7 +6,7 @@ using System.Threading.Tasks.Sources;
 namespace Requests
 {
     /// <summary>
-    /// Base class for requests that can be managed by the <see cref="RequestHandler"/>.
+    /// Base class for requests that can be managed by the <see cref="ParallelRequestHandler"/>.
     /// </summary>
     public abstract partial class Request<TOptions, TCompleted, TFailed> : IRequest, IValueTaskSource
         where TOptions : RequestOptions<TCompleted, TFailed>, new()
@@ -68,7 +68,7 @@ namespace Requests
         /// <summary>
         /// The synchronization context captured upon construction for marshaling callbacks.
         /// </summary>
-        protected SynchronizationContext SynchronizationContext { get; }
+        protected SynchronizationContext? SynchronizationContext { get; }
 
         /// <summary>
         /// The options that started this request (immutable).
@@ -134,7 +134,7 @@ namespace Requests
         {
             StartOptions = options ?? new();
             Options = StartOptions with { };
-            SynchronizationContext = SynchronizationContext.Current ?? Options.Handler.DefaultSynchronizationContext;
+            SynchronizationContext = SynchronizationContext.Current ?? Options.Handler?.DefaultSynchronizationContext;
 
             // Initialize state machine
             _stateMachine = new RequestStateMachine(
@@ -160,15 +160,25 @@ namespace Requests
             }
 
             // Marshal state change to original context
-            SynchronizationContext.Post(s_stateChangedCallback, (this, newState));
+            SynchronizationContext?.Post(s_stateChangedCallback, (this, newState));
         }
 
         /// <summary>
         /// Creates a cancellation token source linked to handler and optional request token.
         /// </summary>
-        private CancellationTokenSource CreateCancellationTokenSource() => Options.CancellationToken.HasValue
+        private CancellationTokenSource CreateCancellationTokenSource()
+        {
+            if (Options.Handler == null)
+            {
+                return Options.CancellationToken.HasValue
+                    ? CancellationTokenSource.CreateLinkedTokenSource(Options.CancellationToken.Value)
+                    : new CancellationTokenSource();
+            }
+
+            return Options.CancellationToken.HasValue
                 ? CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken, Options.CancellationToken.Value)
                 : CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken);
+        }
 
         /// <summary>
         /// Registers cancellation callback.
@@ -192,7 +202,7 @@ namespace Requests
             }
 
             // If handler token was cancelled, pause and wait for handler to resume
-            if (Options.Handler.CancellationToken.IsCancellationRequested && State == RequestState.Running)
+            if (Options.Handler?.CancellationToken.IsCancellationRequested == true && State == RequestState.Running)
             {
                 Pause();
             }
@@ -215,7 +225,7 @@ namespace Requests
             _completionSource.TrySetCanceled();
 
             // Marshal callback to original context
-            SynchronizationContext.Post(s_requestCancelledCallback, this);
+            SynchronizationContext?.Post(s_requestCancelledCallback, this);
 
             Options.SubsequentRequest?.Cancel();
         }
@@ -235,7 +245,7 @@ namespace Requests
             }
 
             _stateMachine.TryTransition(RequestState.Idle);
-            Options.Handler.RunRequests(this);
+            Options.Handler?.Add(this);
         }
 
         /// <summary>
@@ -269,7 +279,7 @@ namespace Requests
                 return;
 
             _stateMachine.TryTransition(RequestState.Idle);
-            Options.Handler.RunRequests(this);
+            Options.Handler?.Add(this);
         }
 
         /// <summary>
@@ -338,7 +348,7 @@ namespace Requests
                 }
 
                 // Marshal callback to original context
-                SynchronizationContext.Post(s_requestStartedCallback, this);
+                SynchronizationContext?.Post(s_requestStartedCallback, this);
 
                 // Execute the request
                 RequestReturn result = await ExecuteRequestAsync().ConfigureAwait(false);
@@ -363,7 +373,7 @@ namespace Requests
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool ShouldExecute() =>
             State == RequestState.Idle
-            && !Options.Handler.CancellationToken.IsCancellationRequested
+            && Options.Handler?.CancellationToken.IsCancellationRequested != true
             && Options.CancellationToken?.IsCancellationRequested != true;
 
         /// <summary>
@@ -410,7 +420,7 @@ namespace Requests
 
                 if (result.CompletedReturn is not null)
                 {
-                    SynchronizationContext.Post(s_requestCompletedCallback, (this, result.CompletedReturn));
+                    SynchronizationContext?.Post(s_requestCompletedCallback, (this, result.CompletedReturn));
                 }
             }
             else
@@ -426,7 +436,7 @@ namespace Requests
                 }
 
                 // Check if handler was cancelled, pause and wait for resume
-                if (Options.Handler.CancellationToken.IsCancellationRequested)
+                if (Options.Handler?.CancellationToken.IsCancellationRequested == true)
                 {
                     _stateMachine.TryTransition(RequestState.Paused); // TODO: Not clear if Paused or Idle deciding later
                     return;
@@ -442,7 +452,7 @@ namespace Requests
                     else
                     {
                         _stateMachine.TryTransition(RequestState.Idle);
-                        Options.Handler.RunRequests(this);
+                        Options.Handler?.Add(this);
                     }
                     return;
                 }
@@ -453,7 +463,7 @@ namespace Requests
 
                 if (result.FailedReturn is not null)
                 {
-                    SynchronizationContext.Post(s_requestFailedCallback, (this, result.FailedReturn));
+                    SynchronizationContext?.Post(s_requestFailedCallback, (this, result.FailedReturn));
                 }
             }
         }
@@ -504,7 +514,7 @@ namespace Requests
         {
             _exceptions.Add(exception);
             Exception = new AggregateException(_exceptions);
-            SynchronizationContext.Post(s_requestExceptionCallback, (this, exception));
+            SynchronizationContext?.Post(s_requestExceptionCallback, (this, exception));
         }
 
         /// <summary>

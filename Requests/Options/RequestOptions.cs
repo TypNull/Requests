@@ -20,7 +20,7 @@
         public TimeSpan? DeployDelay { get; set; } = null;
 
         ///<inheritdoc />
-        public RequestHandler Handler { get; set; } = RequestHandler.MainRequestHandlers[0];
+        public IRequestHandler? Handler { get; set; } = ParallelRequestHandler.MainRequestHandler;
 
         ///<inheritdoc />
         public byte NumberOfAttempts { get; set; } = 3;

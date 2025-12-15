@@ -10,7 +10,7 @@ namespace Requests
     /// <typeparam name="TRequest">A class that implements <see cref="IRequest"/></typeparam>
     public class RequestContainer<TRequest> : IRequestContainer<TRequest> where TRequest : IRequest
     {
-        private volatile TRequest[] _requests = Array.Empty<TRequest>();
+        private volatile TRequest[] _requests = [];
         private int _count;
         private bool _isRunning = true;
         private bool _isCanceled = false;

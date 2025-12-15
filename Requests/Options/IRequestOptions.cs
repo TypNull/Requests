@@ -23,9 +23,9 @@
         public TimeSpan? DeployDelay { get; set; }
 
         /// <summary>
-        /// Sets the the <see cref="RequestHandler"/> for the <see cref="IRequest"/>.
+        /// Sets the <see cref="IRequestHandler"/> for the <see cref="IRequest"/>.
         /// </summary>
-        public RequestHandler Handler { get; set; }
+        public IRequestHandler? Handler { get; set; }
 
         /// <summary>
         /// Specifies the number of times the <see cref="IRequest"/> should be retried if it fails.

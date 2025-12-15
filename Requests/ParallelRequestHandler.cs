@@ -6,10 +6,10 @@ using System.Text;
 namespace Requests
 {
     /// <summary>
-    /// The <see cref="RequestHandler"/> class is responsible for executing instances of the <see cref="IRequest"/> interface.
+    /// The <see cref="ParallelRequestHandler"/> class is responsible for executing instances of the <see cref="IRequest"/> interface in parallel.
     /// Optimized for high-performance scenarios with minimal allocations and thread-safe state management.
     /// </summary>
-    public class RequestHandler : IRequestContainer<IRequest>, IAsyncEnumerable<IRequest>
+    public class ParallelRequestHandler : IRequestHandler, IAsyncEnumerable<IRequest>
     {
         private readonly IPriorityChannel<IRequest> _requestsChannel;
         private readonly RequestContainerStateMachine _stateMachine;
@@ -25,12 +25,12 @@ namespace Requests
         // Cached delegate to avoid allocations
         private static readonly SendOrPostCallback s_stateChangedCallback = static state =>
         {
-            (RequestHandler handler, RequestState newState) = ((RequestHandler, RequestState))state!;
+            (ParallelRequestHandler handler, RequestState newState) = ((ParallelRequestHandler, RequestState))state!;
             handler.StateChanged?.Invoke(handler, newState);
         };
 
         /// <summary>
-        /// Represents the current state of this <see cref="RequestHandler"/>.
+        /// Represents the current state of this <see cref="ParallelRequestHandler"/>.
         /// </summary>
         public RequestState State => _stateMachine.Current;
 
@@ -55,7 +55,7 @@ namespace Requests
         public Task Task => _task ?? Task.CompletedTask;
 
         /// <summary>
-        /// Gets the aggregate exception associated with the <see cref="RequestHandler"/> instance.
+        /// Gets the aggregate exception associated with the <see cref="ParallelRequestHandler"/> instance.
         /// Returns the last unhandled exception if any occurred.
         /// </summary>
         public AggregateException? Exception => _unhandledException != null ? new AggregateException(_unhandledException) : null;
@@ -98,14 +98,14 @@ namespace Requests
         public CancellationToken CancellationToken => _cts.Token;
 
         /// <summary>
-        /// Two primary handlers to handle instances of the <see cref="IRequest"/> interface.
+        /// Primary handler to handle instances of the <see cref="IRequest"/> interface.
         /// </summary>
-        public static RequestHandler[] MainRequestHandlers { get; } = [[], []];
+        public static ParallelRequestHandler MainRequestHandler { get; } = [];
 
         /// <summary>
         /// A default synchronization context that targets the ThreadPool.
         /// </summary>
-        public readonly SynchronizationContext DefaultSynchronizationContext = new();
+        public SynchronizationContext DefaultSynchronizationContext { get; } = new();
 
         /// <summary>
         /// The number of instances of the <see cref="IRequest"/> interface that are not yet handled.
@@ -169,20 +169,20 @@ namespace Requests
         IRequest? IRequest.SubsequentRequest => null;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="RequestHandler"/> class with a priority channel.
+        /// Initializes a new instance of the <see cref="ParallelRequestHandler"/> class with a priority channel.
         /// </summary>
         /// <exception cref="ArgumentOutOfRangeException">Thrown if the priority count is negative.</exception>
-        public RequestHandler()
+        public ParallelRequestHandler()
         {
             _requestsChannel = new DynamicPriorityChannel<IRequest>();
             _stateMachine = new RequestContainerStateMachine(RequestState.Idle, OnStateChanged);
         }
 
         /// <summary>
-        /// Constructor for the <see cref="RequestHandler"/> class.
+        /// Constructor for the <see cref="ParallelRequestHandler"/> class.
         /// </summary>
         /// <param name="requests">Instances of the <see cref="IRequest"/> interface that should be added.</param>
-        public RequestHandler(params IRequest[] requests) : this()
+        public ParallelRequestHandler(params IRequest[] requests) : this()
         {
             AddRange(requests);
             _requestsChannel.Options.EasyEndToken = _pts.Token;
@@ -216,13 +216,13 @@ namespace Requests
             _unhandledException = ex;
             DefaultSynchronizationContext.Post(static state =>
             {
-                (RequestHandler handler, Exception exception) = ((RequestHandler, Exception))state!;
+                (ParallelRequestHandler handler, Exception exception) = ((ParallelRequestHandler, Exception))state!;
                 handler.UnhandledException?.Invoke(handler, exception);
             }, (this, ex));
         }
 
         /// <summary>
-        /// Synchronously adds a request to the handler.
+        /// Synchronously adds a request to the handler and starts processing if not already running.
         /// Throws if the channel is closed or the request is null.
         /// </summary>
         /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
@@ -234,6 +234,8 @@ namespace Requests
 
             if (!_requestsChannel.Writer.TryWrite(new(request.Priority, request)))
                 throw new InvalidOperationException("Failed to add request, channel may be closed or full");
+
+            RunRequests();
         }
 
         /// <summary>
@@ -254,28 +256,19 @@ namespace Requests
         public void AddRange(params IRequest[] requests)
         {
             ArgumentNullException.ThrowIfNull(requests);
+
+            bool anyAdded = false;
             foreach (IRequest request in requests)
-                Add(request);
-        }
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                if (_requestsChannel.Writer.TryWrite(new(request.Priority, request)))
+                    anyAdded = true;
+                else
+                    throw new InvalidOperationException("Failed to add request, channel may be closed or full");
+            }
 
-        /// <summary>
-        /// Method to run the instance of the <see cref="IRequest"/> interface and add instances of the <see cref="IRequest"/> interface.
-        /// </summary>
-        /// <param name="request">The instance of the <see cref="IRequest"/> interface that should be added.</param>
-        public void RunRequests(IRequest request)
-        {
-            Add(request);
-            RunRequests();
-        }
-
-        /// <summary>
-        /// Executes the provided instances of the <see cref="IRequest"/> interface and adds them to the request queue.
-        /// </summary>
-        /// <param name="requests">Instances of the <see cref="IRequest"/> interface that should be added.</param>
-        public void RunRequests(params IRequest[] requests)
-        {
-            AddRange(requests);
-            RunRequests();
+            if (anyAdded)
+                RunRequests();
         }
 
         /// <summary>
@@ -310,7 +303,7 @@ namespace Requests
         public void CreateCTS()
         {
             if (_disposed)
-                throw new ObjectDisposedException(nameof(RequestHandler), "Cannot create a new CancellationTokenSource after the object has been disposed.");
+                throw new ObjectDisposedException(nameof(ParallelRequestHandler), "Cannot create a new CancellationTokenSource after the object has been disposed.");
 
             if (_cts.IsCancellationRequested)
             {
@@ -325,48 +318,12 @@ namespace Requests
         }
 
         /// <summary>
-        /// Creates a new <see cref="CancellationTokenSource"/> for all main RequestHandlers.
-        /// </summary>
-        public static void CreateMainCTS()
-        {
-            foreach (RequestHandler handler in MainRequestHandlers)
-                handler.CreateCTS();
-        }
-
-        /// <summary>
         /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in this RequestHandler.
         /// </summary>
         public void Cancel()
         {
             _cts.Cancel();
             _stateMachine.TryTransition(RequestState.Cancelled);
-        }
-
-        /// <summary>
-        /// Cancels the main <see cref="CancellationTokenSource"/> for all instances of the <see cref="IRequest"/> interface in the Main RequestHandlers.
-        /// </summary>
-        public static void CancelMainCTS()
-        {
-            foreach (RequestHandler handler in MainRequestHandlers)
-                handler.Cancel();
-        }
-
-        /// <summary>
-        /// Pauses the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers, allowing any currently running requests to complete.
-        /// </summary>
-        public static void PauseMain()
-        {
-            foreach (RequestHandler handler in MainRequestHandlers)
-                handler.Pause();
-        }
-
-        /// <summary>
-        /// Resumes the execution of instances of the <see cref="IRequest"/> interface for all Main RequestHandlers if they were previously paused.
-        /// </summary>
-        public static void ResumeMain()
-        {
-            foreach (RequestHandler handler in MainRequestHandlers)
-                handler.Start();
         }
 
         /// <summary>
@@ -473,7 +430,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Sets the priority for the <see cref="RequestHandler"/>.
+        /// Sets the priority for the <see cref="ParallelRequestHandler"/>.
         /// Not to the contained <see cref="IRequest"/> objects.
         /// </summary>
         public void SetPriority(RequestPriority priority) => _priority = priority;
@@ -524,7 +481,7 @@ namespace Requests
         }
 
         /// <summary>
-        /// Checks whether the <see cref="RequestHandler"/> has completed all work.
+        /// Checks whether the <see cref="ParallelRequestHandler"/> has completed all work.
         /// </summary>
         /// <returns><c>true</c> if the handler is in a terminal state and has no pending requests; otherwise, <c>false</c>.</returns>
         public bool HasCompleted() =>
@@ -540,7 +497,7 @@ namespace Requests
         public ValueTask YieldAsync() => ValueTask.CompletedTask;
 
         /// <summary>
-        /// Disposes the <see cref="RequestHandler"/> instance and canceling all ongoing tasks.
+        /// Disposes the <see cref="ParallelRequestHandler"/> instance and canceling all ongoing tasks.
         /// </summary>
         public void Dispose()
         {
@@ -555,9 +512,9 @@ namespace Requests
         }
 
         /// <summary>
-        /// Provides a detailed string representation of the current state of the <see cref="RequestHandler"/> instance.
+        /// Provides a detailed string representation of the current state of the <see cref="ParallelRequestHandler"/> instance.
         /// </summary>
-        /// <returns>A string that represents the current state of the <see cref="RequestHandler"/>.</returns>
+        /// <returns>A string that represents the current state of the <see cref="ParallelRequestHandler"/>.</returns>
         public override string ToString()
         {
             StringBuilder sb = new();

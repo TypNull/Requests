@@ -3,7 +3,7 @@
 namespace Requests
 {
     /// <summary>
-    /// Represents a request that can be managed by the <see cref="RequestHandler"/>.
+    /// Represents a request that can be managed by the <see cref="ParallelRequestHandler"/>.
     /// </summary>
     public interface IRequest : IDisposable
     {

@@ -8,12 +8,16 @@ namespace Requests
     /// <typeparam name="TRequest">A class that implements <see cref="IRequest"/>.</typeparam>
     public interface IRequestContainer<TRequest> : IEnumerable<TRequest>, IRequest where TRequest : IRequest
     {
-
         /// <summary>
         /// Gets the count of <see cref="IRequest"/> instances contained in the <see cref="IRequestContainer{TRequest}"/>.
         /// </summary>
         int Count { get; }
 
+        /// <summary>
+        /// Waits for all currently pending requests in the container to complete.
+        /// </summary>
+        /// <param name="cancellationToken">A cancellation token to cancel the wait operation.</param>
+        /// <returns>A task that completes when all current requests have finished.</returns>
         Task WaitForCurrentRequestsAsync(CancellationToken cancellationToken);
 
         /// <summary>
