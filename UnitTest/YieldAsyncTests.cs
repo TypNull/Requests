@@ -7,48 +7,47 @@ namespace UnitTest
     [TestFixture]
     public class YieldAsyncTests
     {
-        #region Test Helper Classes
+        private ParallelRequestHandler _parallelHandler = null!;
+        private SequentialRequestHandler _sequentialHandler = null!;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _parallelHandler = new ParallelRequestHandler();
+            _sequentialHandler = new SequentialRequestHandler();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            _parallelHandler?.Dispose();
+            _sequentialHandler?.Dispose();
+        }
+
+        #region Helper Methods
 
         /// <summary>
-        /// Test request implementation that tracks yield calls.
+        /// Creates a test request with the parallel handler.
         /// </summary>
-        private class YieldTrackingRequest : Request<RequestOptions<object, object>, object, object>
+        private OwnRequest CreateParallelRequest(Func<CancellationToken, Task<bool>> work, bool autoStart = true)
         {
-            private readonly Func<CancellationToken, Task<bool>> _action;
-            public int YieldCount { get; private set; }
-            public List<DateTime> YieldTimes { get; } = [];
-            private TaskCompletionSource<bool>? _pauseResumeTcs;
-
-            public YieldTrackingRequest(Func<CancellationToken, Task<bool>> action, RequestOptions<object, object>? options = null)
-                : base(options)
+            return new OwnRequest(work, new RequestOptions<object, object>
             {
-                _action = action;
-            }
+                Handler = _parallelHandler,
+                AutoStart = autoStart
+            });
+        }
 
-            protected override async Task<RequestReturn> RunRequestAsync()
+        /// <summary>
+        /// Creates a test request with the sequential handler.
+        /// </summary>
+        private OwnRequest CreateSequentialRequest(Func<CancellationToken, Task<bool>> work, bool autoStart = true)
+        {
+            return new OwnRequest(work, new RequestOptions<object, object>
             {
-                bool result = await _action(Token);
-                return new RequestReturn { Successful = result };
-            }
-
-            public new async ValueTask YieldAsync()
-            {
-                YieldCount++;
-                YieldTimes.Add(DateTime.Now);
-                await base.YieldAsync();
-            }
-
-            public void PauseExecution()
-            {
-                _pauseResumeTcs = new TaskCompletionSource<bool>();
-                Pause();
-            }
-
-            public void ResumeExecution()
-            {
-                _pauseResumeTcs?.TrySetResult(true);
-                Start();
-            }
+                Handler = _sequentialHandler,
+                AutoStart = autoStart
+            });
         }
 
         #endregion
@@ -59,7 +58,7 @@ namespace UnitTest
         public async Task YieldAsync_NotPausedNotCancelled_ShouldCompleteSynchronously()
         {
             // Arrange
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Task.Yield();
                 return true;
@@ -76,9 +75,8 @@ namespace UnitTest
         [Test]
         public async Task YieldAsync_MultipleCalls_ShouldAllCompleteFast()
         {
-            // Arrange & Act
-            using ParallelRequestHandler handler = new();
-            using OwnRequest request = new(async token =>
+            // Arrange
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < 10; i++)
                 {
@@ -87,9 +85,7 @@ namespace UnitTest
                 return true;
             });
 
-            handler.Add(request);
-
-            // Assert
+            // Act & Assert
             for (int i = 0; i < 5; i++)
             {
                 ValueTask yieldTask = request.YieldAsync();
@@ -109,9 +105,8 @@ namespace UnitTest
         {
             // Arrange
             TaskCompletionSource<bool> tcs = new();
-            using ParallelRequestHandler handler = new();
             OwnRequest? capturedRequest = null;
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 tcs.SetResult(true);
                 await capturedRequest!.YieldAsync();
@@ -119,7 +114,6 @@ namespace UnitTest
             });
             capturedRequest = request;
 
-            handler.Add(request);
             await tcs.Task; // Wait for request to start
 
             // Act
@@ -138,9 +132,8 @@ namespace UnitTest
         {
             // Arrange
             bool yieldCompleted = false;
-            using ParallelRequestHandler handler = new();
             OwnRequest? capturedRequest = null;
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 capturedRequest!.Pause();
                 await capturedRequest.YieldAsync();
@@ -150,7 +143,6 @@ namespace UnitTest
             capturedRequest = request;
 
             // Act
-            handler.Add(request);
             await Task.Delay(100);
             request.Start();
             await Task.Delay(100);
@@ -167,7 +159,7 @@ namespace UnitTest
         public void YieldAsync_WhenCancelled_ShouldThrowOperationCanceledException()
         {
             // Arrange
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Task.Yield();
                 return true;
@@ -187,7 +179,7 @@ namespace UnitTest
             // Arrange
             TaskCompletionSource<bool> yieldStarted = new();
             OwnRequest? capturedRequest = null;
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 yieldStarted.SetResult(true);
                 capturedRequest!.Pause();
@@ -196,7 +188,6 @@ namespace UnitTest
             });
             capturedRequest = request;
 
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await yieldStarted.Task;
 
             // Act
@@ -227,8 +218,7 @@ namespace UnitTest
         {
             // Arrange
             int yieldCount = 0;
-            using ParallelRequestHandler handler = new();
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < 5; i++)
                 {
@@ -239,7 +229,6 @@ namespace UnitTest
             });
 
             // Act
-            handler.Add(request);
             await request.Task;
 
             // Assert
@@ -254,8 +243,7 @@ namespace UnitTest
             List<int> request1Yields = [];
             List<int> request2Yields = [];
 
-            using ParallelRequestHandler handler = new();
-            using OwnRequest request1 = new(async token =>
+            using OwnRequest request1 = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < 3; i++)
                 {
@@ -266,7 +254,7 @@ namespace UnitTest
                 return true;
             });
 
-            using OwnRequest request2 = new(async token =>
+            using OwnRequest request2 = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < 3; i++)
                 {
@@ -278,7 +266,6 @@ namespace UnitTest
             });
 
             // Act
-            handler.AddRange(request1, request2);
             await Task.WhenAll(request1.Task, request2.Task);
 
             // Assert
@@ -321,7 +308,7 @@ namespace UnitTest
         {
             // Arrange
             bool continuationCalled = false;
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Task.Yield();
                 return true;
@@ -400,38 +387,38 @@ namespace UnitTest
         public async Task YieldAsync_InParallelHandler_ShouldAllowPause()
         {
             // Arrange
-            using ParallelRequestHandler handler = new();
             bool yieldedDuringPause = false;
 
-            OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Task.Delay(50, token);
                 await Request.Yield();
-                yieldedDuringPause = handler.State == RequestState.Paused;
+                yieldedDuringPause = _parallelHandler.State == RequestState.Paused;
                 return true;
             });
 
-            handler.Add(request);
-
             // Act
             await Task.Delay(30);
-            handler.Pause();
+            _parallelHandler.Pause();
             await Task.Delay(100);
-            handler.Start();
+            _parallelHandler.Start();
             await request.Task;
 
             // Assert
             request.State.Should().Be(RequestState.Completed);
         }
 
+        #endregion
+
+        #region Integration Tests with SequentialRequestHandler
+
         [Test]
         public async Task YieldAsync_InSequentialHandler_ShouldRespectSequentialExecution()
         {
             // Arrange
-            using SequentialRequestHandler handler = new();
             List<int> executionOrder = [];
 
-            OwnRequest request1 = new(async token =>
+            using OwnRequest request1 = CreateSequentialRequest(async token =>
             {
                 executionOrder.Add(1);
                 await Request.Yield();
@@ -439,7 +426,7 @@ namespace UnitTest
                 return true;
             });
 
-            OwnRequest request2 = new(async token =>
+            using OwnRequest request2 = CreateSequentialRequest(async token =>
             {
                 executionOrder.Add(3);
                 await Request.Yield();
@@ -448,8 +435,7 @@ namespace UnitTest
             });
 
             // Act
-            handler.AddRange(request1, request2);
-            await Task.Delay(500);
+            await Task.WhenAll(request1.Task, request2.Task);
 
             // Assert
             executionOrder.Should().ContainInOrder([1, 2, 3, 4]);
@@ -466,7 +452,7 @@ namespace UnitTest
             const int yieldCount = 1000;
             int actualYields = 0;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < yieldCount; i++)
                 {
@@ -478,7 +464,6 @@ namespace UnitTest
 
             // Act
             DateTime startTime = DateTime.Now;
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
             TimeSpan elapsed = DateTime.Now - startTime;
 
@@ -494,7 +479,7 @@ namespace UnitTest
             int outerYields = 0;
             int innerYields = 0;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 for (int i = 0; i < 3; i++)
                 {
@@ -511,7 +496,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -529,7 +513,7 @@ namespace UnitTest
             // Arrange
             bool yielded = false;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Request.Yield();
                 yielded = true;
@@ -537,7 +521,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -550,7 +533,7 @@ namespace UnitTest
             // Arrange
             bool yieldedBeforeCompletion = false;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Task.Delay(50, token);
                 await Request.Yield();
@@ -559,7 +542,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -570,15 +552,14 @@ namespace UnitTest
         public async Task YieldAsync_WithException_ShouldAddExceptionToList()
         {
             // Arrange
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Request.Yield();
                 throw new InvalidOperationException("Test exception");
             });
 
             // Act
-            using ParallelRequestHandler handler = new([request]);
-            await request;
+            await request.Task;
 
             // Assert
             request.Exception.Should().NotBeNull();
@@ -586,14 +567,13 @@ namespace UnitTest
             request.Exception!.InnerExceptions.First().Message.Should().Be("Test exception");
         }
 
-
         [Test]
         public async Task YieldAsync_InTryFinally_ShouldExecuteFinally()
         {
             // Arrange
             bool finallyExecuted = false;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 try
                 {
@@ -607,7 +587,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -620,7 +599,7 @@ namespace UnitTest
             // Arrange
             bool exceptionCaught = false;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 try
                 {
@@ -635,7 +614,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -654,7 +632,7 @@ namespace UnitTest
             SynchronizationContext? contextAfterYield = null;
             SynchronizationContext testContext = new();
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 SynchronizationContext.SetSynchronizationContext(testContext);
                 contextBeforeYield = SynchronizationContext.Current;
@@ -664,7 +642,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert - Note: Context may not be preserved across yields, which is expected
@@ -677,7 +654,7 @@ namespace UnitTest
             // Arrange
             TaskScheduler? schedulerInRequest = null;
 
-            using OwnRequest request = new(async token =>
+            using OwnRequest request = CreateParallelRequest(async token =>
             {
                 await Request.Yield();
                 schedulerInRequest = TaskScheduler.Current;
@@ -685,7 +662,6 @@ namespace UnitTest
             });
 
             // Act
-            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert

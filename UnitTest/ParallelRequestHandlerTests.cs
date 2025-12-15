@@ -223,7 +223,7 @@ namespace UnitTest
         #region State Events Tests
 
         [Test]
-        public void StateChanged_WhenStateChanges_ShouldFireEvent()
+        public async Task StateChanged_WhenStateChanges_ShouldFireEvent()
         {
             // Arrange
             List<RequestState> stateChanges = [];
@@ -231,6 +231,8 @@ namespace UnitTest
 
             // Act
             _handler.Pause();
+
+            await Task.Delay(100);
 
             // Assert
             stateChanges.Should().NotBeEmpty();
