@@ -4,14 +4,14 @@ namespace UnitTest
     /// Test suite for the RequestHandler class using only public API.
     /// </summary>
     [TestFixture]
-    public class RequestHandlerTests
+    public class ParallelRequestHandlerTests
     {
-        private RequestHandler _handler = null!;
+        private ParallelRequestHandler _handler = null!;
 
         [SetUp]
         public void SetUp()
         {
-            _handler = new RequestHandler();
+            _handler = new ParallelRequestHandler();
         }
 
         [TearDown]
@@ -29,20 +29,6 @@ namespace UnitTest
             _handler.Should().NotBeNull();
             _handler.State.Should().Be(RequestState.Idle);
             _handler.Count.Should().Be(0);
-        }
-
-        [Test]
-        public void Constructor_WithPriorityCount_ShouldInitializeCorrectly()
-        {
-            // Arrange & Act
-            RequestHandler handler = new(5);
-
-            // Assert
-            handler.Should().NotBeNull();
-            handler.State.Should().Be(RequestState.Idle);
-
-            // Clean up
-            handler.Dispose();
         }
 
         #endregion
@@ -187,7 +173,7 @@ namespace UnitTest
 
             // Act
             _handler.Start();
-            _handler.RunRequests(request);
+            _handler.Add(request);
             await request.Task;
 
             // Assert
@@ -201,12 +187,12 @@ namespace UnitTest
         public async Task RunRequests_WithMultipleRequests_ShouldExecuteAll()
         {
             // Arrange
-            OwnRequest[] requests = new[] { CreateTestRequest(), CreateTestRequest() };
+            OwnRequest[] requests = [CreateTestRequest(), CreateTestRequest()];
             _handler.AddRange(requests);
 
             // Act
             _handler.Start();
-            _handler.RunRequests(requests);
+            _handler.AddRange(requests);
             await Task.WhenAll(requests.Select(r => r.Task));
 
             // Assert

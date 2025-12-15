@@ -49,10 +49,10 @@ namespace UnitTest
                     throw new InvalidOperationException($"Test exception on attempt {ExecutionCount}");
 
                 if (!ShouldSucceed)
-                    return new RequestReturn(false, default!, new Exception($"Test failure on attempt {ExecutionCount}"));
+                    return new RequestReturn { Successful = false, FailedReturn = new Exception($"Test failure on attempt {ExecutionCount}") };
 
                 await Task.Delay(50); // Simulate work
-                return new RequestReturn(true, $"Success on attempt {ExecutionCount}", default!);
+                return new RequestReturn { Successful = true, CompletedReturn = $"Success on attempt {ExecutionCount}" };
             }
         }
 

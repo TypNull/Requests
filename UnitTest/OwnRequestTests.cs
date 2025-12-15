@@ -34,7 +34,7 @@ namespace UnitTest
             {
                 await Task.Delay(10, token);
                 return false;
-            });
+            }, new() { NumberOfAttempts = 1 });
 
             // Act
             await request.Task;
