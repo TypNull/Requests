@@ -243,7 +243,7 @@ namespace Requests
 
             try
             {
-                TRequest[] storedRequests = GetStored().Where(x => !requests.Any(y => y.Equals(x))).ToArray();
+                TRequest[] storedRequests = [.. GetStored().Where(x => !requests.Any(y => y.Equals(x)))];
 
                 int size = storedRequests.Length;
                 int newSize = size + 32;
