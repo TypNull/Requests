@@ -16,11 +16,11 @@
 		<PackageTags>async; channel; priority; request; parallel; </PackageTags>
 		<RepositoryUrl>https://github.com/TypNull/Requests</RepositoryUrl>
 		<PackageIcon>logo.png</PackageIcon>
-		<Version>2.2.1</Version>
+		<Version>0</Version>
 		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
 		<PackageId>Shard.Requests</PackageId>
-		<PackageReleaseNotes>Implement support for overwriting SubsequentRequest property in the Request&lt;&gt; class</PackageReleaseNotes>
+		<PackageReleaseNotes>Version history on GitHub</PackageReleaseNotes>
 	</PropertyGroup>
 
 	<ItemGroup>
