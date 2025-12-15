@@ -41,6 +41,8 @@ namespace UnitTest
             public AggregateException? Exception { get; private set; }
             public IRequest? SubsequentRequest { get; private set; }
 
+            public bool PropagateException = false;
+
             public MockSequentialRequest(Func<CancellationToken, Task<bool>>? action = null)
             {
                 _action = action;
@@ -95,6 +97,8 @@ namespace UnitTest
                     Exception = new AggregateException(ex);
                     SetState(RequestState.Failed);
                     _tcs.TrySetException(ex);
+                    if (PropagateException)
+                        throw;
                 }
             }
 
@@ -254,11 +258,11 @@ namespace UnitTest
             List<RequestPriority> executionOrder = [];
 
             MockSequentialRequest lowPriorityRequest = new(_ => { executionOrder.Add(RequestPriority.Low); return Task.FromResult(true); })
-                { Priority = RequestPriority.Low };
+            { Priority = RequestPriority.Low };
             MockSequentialRequest highPriorityRequest = new(_ => { executionOrder.Add(RequestPriority.High); return Task.FromResult(true); })
-                { Priority = RequestPriority.High };
+            { Priority = RequestPriority.High };
             MockSequentialRequest normalPriorityRequest = new(_ => { executionOrder.Add(RequestPriority.Normal); return Task.FromResult(true); })
-                { Priority = RequestPriority.Normal };
+            { Priority = RequestPriority.Normal };
 
             _handler.AddRange(lowPriorityRequest, normalPriorityRequest, highPriorityRequest);
 
@@ -415,7 +419,10 @@ namespace UnitTest
             Exception? caughtException = null;
             _handler.UnhandledException += (s, ex) => caughtException = ex;
 
-            MockSequentialRequest failingRequest = new(_ => throw new InvalidOperationException("Test error"));
+            MockSequentialRequest failingRequest = new(_ => throw new InvalidOperationException("Test error"))
+            {
+                PropagateException = true
+            };
 
             // Act
             _handler.Add(failingRequest);
@@ -595,15 +602,18 @@ namespace UnitTest
         #region StateChanged Event Tests
 
         [Test]
-        public void StateChanged_WhenStateChanges_ShouldFireEvent()
+        public async Task StateChanged_WhenStateChanges_ShouldFireEvent()
         {
             // Arrange
             List<RequestState> stateChanges = [];
+            _handler.Add(new OwnRequest(async (t) => true, new() { AutoStart = false }));
             _handler.StateChanged += (s, state) => stateChanges.Add(state);
 
             // Act
             _handler.Pause();
             _handler.Cancel();
+
+            await Task.Delay(100); // Allow event processing
 
             // Assert
             stateChanges.Should().Contain(RequestState.Paused);

@@ -382,38 +382,21 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
 
     /// <summary>
     /// Attempts to set all <see cref="IRequest"/> objects in the container's <see cref="State"/> to idle.
-    /// Pauses the handler during this operation and returns it to the previous state afterward.
+    /// The handler needs to be paused before this operation.
     /// </summary>
     /// <returns>True if all <see cref="IRequest"/> objects are in an idle <see cref="RequestState"/>, otherwise false.</returns>
     public bool TrySetIdle()
     {
-        RequestState previousState = State;
-
-        if (!_stateMachine.TryTransition(RequestState.Paused))
+        if (State != RequestState.Paused)
             return false;
 
-        try
-        {
-            PriorityItem<IRequest>[] requests = _requestQueue.ToArray();
+        PriorityItem<IRequest>[] requests = _requestQueue.ToArray();
 
-            foreach (PriorityItem<IRequest> priorityItem in requests)
-                _ = priorityItem.Item.TrySetIdle();
+        foreach (PriorityItem<IRequest> priorityItem in requests)
+            _ = priorityItem.Item.TrySetIdle();
 
-            bool allIdle = requests.All(x => x.Item.State == RequestState.Idle);
-
-            // Restore previous state if we paused it
-            if (previousState != RequestState.Paused)
-                _stateMachine.TryTransition(previousState);
-
-            return allIdle;
-        }
-        catch
-        {
-            // Restore state on error
-            if (previousState != RequestState.Paused)
-                _stateMachine.TryTransition(previousState);
-            throw;
-        }
+        bool allIdle = requests.All(x => x.Item.State == RequestState.Idle);
+        return allIdle;
     }
 
     /// <summary>

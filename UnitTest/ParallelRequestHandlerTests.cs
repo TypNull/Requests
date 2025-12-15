@@ -80,6 +80,21 @@ namespace UnitTest
         }
 
         [Test]
+        public void TrySetIdle_AllIdleRequests_ShouldReturnTrue()
+        {
+            // Arrange
+            _handler.Pause();
+            _handler.AddRange(CreateTestRequest(), CreateTestRequest());
+
+            // Act
+            bool result = _handler.TrySetIdle();
+
+            // Assert
+            result.Should().BeTrue();
+        }
+
+
+        [Test]
         public void Cancel_Handler_ShouldTransitionToCancelled()
         {
             // Act
