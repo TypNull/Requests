@@ -79,9 +79,6 @@ namespace Requests
             // From Completed/Failed
             (RequestState.Completed or RequestState.Failed, RequestState.Idle) => true,
 
-            // Same state transition is always valid (no-op)
-            _ when from == to => true,
-
             // Invalid transitions
             _ => false
         };

@@ -86,7 +86,7 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
         PriorityItem<IRequest>[] snapshot;
         try
         {
-            snapshot = _requestQueue.ToArray();
+            snapshot = [.. _requestQueue];
         }
         catch
         {
@@ -151,19 +151,6 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
     /// </summary>
     private void OnStateChanged(RequestState oldState, RequestState newState)
         => DefaultSynchronizationContext.Post(s_stateChangedCallback, (this, newState));
-
-    /// <summary>
-    /// Attempts to transition to a new state.
-    /// Throws if transition is invalid.
-    /// </summary>
-    private void SetState(RequestState newState)
-    {
-        if (!_stateMachine.TryTransition(newState))
-        {
-            throw new InvalidOperationException(
-                $"Invalid state transition from {State} to {newState}");
-        }
-    }
 
     /// <summary>
     /// Handles unhandled exceptions from the handler's execution.
@@ -284,6 +271,8 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
         if (State != RequestState.Idle)
             return;
 
+        Console.WriteLine("Start RunRequests()");
+
         _task = Task.Run(async () =>
         {
             try
@@ -302,7 +291,7 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
     /// </summary>
     async Task IRequest.StartRequestAsync()
     {
-        if (State != RequestState.Idle || CancellationToken.IsCancellationRequested || _pts.IsPaused)
+        if (!_stateMachine.TryTransition(RequestState.Running) || CancellationToken.IsCancellationRequested || _pts.IsPaused)
             return;
 
         await RunQueueSequentiallyAsync().ConfigureAwait(false);
@@ -314,8 +303,6 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
     /// <returns>async Task to await</returns>
     private async Task RunQueueSequentiallyAsync()
     {
-        SetState(RequestState.Running);
-
         try
         {
             // Process requests one at a time

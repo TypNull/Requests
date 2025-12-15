@@ -196,19 +196,6 @@ namespace Requests
             => DefaultSynchronizationContext.Post(s_stateChangedCallback, (this, newState));
 
         /// <summary>
-        /// Attempts to transition to a new state.
-        /// Throws if transition is invalid.
-        /// </summary>
-        private void SetState(RequestState newState)
-        {
-            if (!_stateMachine.TryTransition(newState))
-            {
-                throw new InvalidOperationException(
-                    $"Invalid state transition from {State} to {newState}");
-            }
-        }
-
-        /// <summary>
         /// Handles unhandled exceptions from the handler's execution.
         /// </summary>
         private void OnUnhandledExceptionOccurred(Exception ex)
@@ -354,7 +341,7 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (State != RequestState.Idle || CancellationToken.IsCancellationRequested || _pts.IsPaused)
+            if (!_stateMachine.TryTransition(RequestState.Running) || CancellationToken.IsCancellationRequested || _pts.IsPaused)
                 return;
 
             await RunChannelAsync().ConfigureAwait(false);
@@ -366,7 +353,6 @@ namespace Requests
         /// <returns>async Task to await</returns>
         private async Task RunChannelAsync()
         {
-            SetState(RequestState.Running);
             UpdateAutoParallelism();
 
             try
