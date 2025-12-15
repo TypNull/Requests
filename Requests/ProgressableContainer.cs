@@ -1,4 +1,4 @@
-﻿namespace Requests
+namespace Requests
 {
     /// <summary>
     /// Combines requests and their progress indicators.
@@ -28,10 +28,10 @@
         /// </summary>
         /// <param name="requestContainers">Other containers to merge.</param>
         /// <returns>A new merged container.</returns>
-        public static ProgressableContainer<TRequest> MergeContainers(/*bool autoReset = false,*/ params ProgressableContainer<TRequest>[] requestContainers)
+        public static ProgressableContainer<TRequest> MergeContainers(params ProgressableContainer<TRequest>[] requestContainers)
         {
             ProgressableContainer<TRequest> container = new();
-            Array.ForEach(requestContainers, requestContainer => container.AddRange(requestContainer.ToArray()));
+            Array.ForEach(requestContainers, requestContainer => container.AddRange([.. requestContainer]));
             return container;
         }
 
@@ -62,24 +62,9 @@
 
         private void AttachProgress(TRequest request)
         {
-            if (request.Progress == null)
-                return;
-            //  if (!AutoReset)
-            // {
-            _progress.Attach(request.Progress);
-            //    return;
-            // }
-            // request.StateChanged += AutoRemove;
+            if (request.Progress != null)
+                _progress.Attach(request.Progress);
         }
-
-        //private void AutoRemove(TRequest? request)
-        //{
-        //    if (request?.StateChanged != null && request.StartOptions.Progress != null && request?.State is RequestState.Compleated or RequestState.Failed or RequestState.Cancelled)
-        //    {
-        //        _progress.TryRemove(request.StartOptions.Progress);
-        //        request.StateChanged -= AutoRemove;
-        //    }
-        //}
 
         /// <summary>
         /// Adds a range of <see cref="IProgressableRequest"/> instances to the container.
@@ -105,38 +90,27 @@
             });
         }
 
-
         /// <summary>
-        /// Combines different progress trackers into one.
+        /// Combines different progress trackers into one using incremental average calculation.
         /// </summary>
-        private class CombinableProgress : Progress<float>
+        private sealed class CombinableProgress : Progress<float>
         {
-            private readonly List<Progress<float>> _progressors = new();
-            private readonly List<float> _values = new();
+            private readonly List<Progress<float>> _progressors = [];
+            private readonly List<float> _values = [];
+            private float _currentAverage = 0f;
             private readonly object _lock = new();
 
             /// <summary>
             /// Gets the count of attached <see cref="Progress{T}"/> instances.
             /// </summary>
-            public int Count => _progressors.Count;
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="CombinableProgress"/> class.
-            /// </summary>
-            public CombinableProgress() { }
-
-            /// <summary>
-            /// Initializes a new instance of the <see cref="CombinableProgress"/> class with the specified callback.
-            /// </summary>
-            /// <param name="handler">
-            /// A handler to invoke for each reported progress value. This handler will be invoked
-            /// in addition to any delegates registered with the ProgressChanged event.
-            /// Depending on the SynchronizationContext instance captured by
-            /// the Progress{T} at construction, it's possible that this handler instance
-            /// could be invoked concurrently with itself.
-            /// </param>
-            /// <exception cref="ArgumentNullException">The handler is null.</exception>
-            public CombinableProgress(Action<float> handler) : base(handler) { }
+            public int Count
+            {
+                get
+                {
+                    lock (_lock)
+                        return _progressors.Count;
+                }
+            }
 
             /// <summary>
             /// Attaches a progress tracker to this CombinableProgress instance.
@@ -144,11 +118,15 @@
             /// <param name="progress">The <see cref="Progress{T}"/></param>
             public void Attach(Progress<float> progress)
             {
+                ArgumentNullException.ThrowIfNull(progress);
+
                 lock (_lock)
                 {
                     _progressors.Add(progress);
-                    _values.Add(0);
+                    _values.Add(0f);
+                    RecalculateAverage();
                 }
+
                 progress.ProgressChanged += OnProgressChanged;
             }
 
@@ -159,42 +137,75 @@
             /// <returns>True if removal was successful; otherwise, false.</returns>
             public bool TryRemove(Progress<float> progress)
             {
+                ArgumentNullException.ThrowIfNull(progress);
+
                 lock (_lock)
                 {
-                    int index = _progressors.FindIndex(x => x == progress);
+                    int index = _progressors.IndexOf(progress);
                     if (index == -1)
                         return false;
+
                     _progressors.RemoveAt(index);
                     _values.RemoveAt(index);
+
+                    if (_progressors.Count > 0)
+                        RecalculateAverage();
+                    else
+                        _currentAverage = 0f;
                 }
+
                 progress.ProgressChanged -= OnProgressChanged;
                 return true;
             }
 
             /// <summary>
             /// Called when any attached progress tracker reports a change in progress.
+            /// Uses incremental average calculation for O(1) performance.
             /// </summary>
             /// <param name="sender">The sender object.</param>
-            /// <param name="e">The progress value.</param>
-            private void OnProgressChanged(object? sender, float e)
+            /// <param name="newValue">The new progress value.</param>
+            private void OnProgressChanged(object? sender, float newValue)
             {
-                double average = 0f;
+                float average;
+
                 lock (_lock)
-                    average = Calculate(sender, e);
-                OnReport((float)average);
+                {
+                    int index = _progressors.FindIndex(p => ReferenceEquals(p, sender));
+                    if (index == -1)
+                        return;
+
+                    float oldValue = _values[index];
+                    _values[index] = newValue;
+
+                    // Incremental average update - O(1) operation
+                    // Formula: new_avg = old_avg + (new_val - old_val) / count
+                    int count = _progressors.Count;
+                    if (count > 0)
+                        _currentAverage += (newValue - oldValue) / count;
+
+                    average = _currentAverage;
+                }
+
+                OnReport(average);
             }
 
-            private double Calculate(object? progress, float value)
+            /// <summary>
+            /// Recalculates the average from scratch. Used when count changes.
+            /// </summary>
+            private void RecalculateAverage()
             {
-                double average = 0;
-                int n = _progressors.Count;
-                for (int i = 0; i < n; i++)
+                int count = _progressors.Count;
+                if (count == 0)
                 {
-                    if (ReferenceEquals(_progressors[i], progress))
-                        _values[i] = value;
-                    average += _values[i];
+                    _currentAverage = 0f;
+                    return;
                 }
-                return average /= n;
+
+                float sum = 0f;
+                foreach (float value in _values)
+                    sum += value;
+
+                _currentAverage = sum / count;
             }
         }
     }

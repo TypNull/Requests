@@ -746,6 +746,233 @@ namespace UnitTest
             _container.Should().NotContain(request1);
         }
 
+        [Test]
+        [Timeout(20000)]
+        public async Task StressTest_ThousandRequests_RapidUpdates()
+        {
+            // Arrange
+            const int requestCount = 1000;
+            MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
+
+            _container.AddRange(requests);
+
+            List<float> progressValues = [];
+            _container.Progress.ProgressChanged += (s, e) => progressValues.Add(e);
+
+            // Act
+            List<Task> updateTasks = [];
+            for (int i = 0; i < requestCount; i++)
+            {
+                int requestIndex = i;
+                updateTasks.Add(Task.Run(() =>
+                {
+                    for (int j = 1; j <= 10; j++)
+                    {
+                        requests[requestIndex].ReportProgress(j / 10f);
+                        Thread.Sleep(1); // Small delay to simulate real work
+                    }
+                }));
+            }
+
+            await Task.WhenAll(updateTasks);
+            await Task.Delay(500); // Let all events settle
+
+            // Assert
+            progressValues.Should().NotBeEmpty();
+            progressValues.Last().Should().BeApproximately(1.0f, 0.05f);
+        }
+
+        [Test]
+        public async Task StressTest_ConcurrentAddRemove_ShouldMaintainCorrectness()
+        {
+            // Arrange
+            const int iterations = 100;
+            List<float> progressValues = [];
+            _container.Progress.ProgressChanged += (s, e) => progressValues.Add(e);
+
+            // Act
+            Task addTask = Task.Run(() =>
+            {
+                for (int i = 0; i < iterations; i++)
+                {
+                    MockProgressableRequest request = new();
+                    _container.Add(request);
+                    request.ReportProgress(0.5f);
+                    Thread.Sleep(5);
+                }
+            });
+
+            Task removeTask = Task.Run(async () =>
+            {
+                await Task.Delay(50); // Start after some adds
+                for (int i = 0; i < iterations / 2; i++)
+                {
+                    if (_container.Count > 0)
+                    {
+                        _container.Remove(_container[0]);
+                    }
+                    Thread.Sleep(10);
+                }
+            });
+
+            Task updateTask = Task.Run(() =>
+            {
+                for (int i = 0; i < iterations * 5; i++)
+                {
+                    if (_container.Count > 0)
+                    {
+                        int index = Random.Shared.Next(_container.Count);
+                        _container[index].ReportProgress(Random.Shared.NextSingle());
+                    }
+                    Thread.Sleep(2);
+                }
+            });
+
+            await Task.WhenAll(addTask, removeTask, updateTask);
+            await Task.Delay(200);
+
+            // Assert
+            _container.Count.Should().BeGreaterThan(0);
+            progressValues.Should().NotBeEmpty();
+        }
+
+        [Test]
+        public async Task StressTest_RapidSequentialUpdates_AllProcessed()
+        {
+            // Arrange
+            const int requestCount = 100;
+            const int updatesPerRequest = 100;
+            MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
+
+            _container.AddRange(requests);
+
+            int eventCount = 0;
+            float lastProgress = 0f;
+            _container.Progress.ProgressChanged += (s, e) =>
+            {
+                Interlocked.Increment(ref eventCount);
+                lastProgress = e;
+            };
+
+            // Act
+            for (int update = 0; update < updatesPerRequest; update++)
+            {
+                float progress = (update + 1) / (float)updatesPerRequest;
+                foreach (MockProgressableRequest request in requests)
+                {
+                    request.ReportProgress(progress);
+                }
+            }
+
+            await Task.Delay(200);
+
+            // Assert
+            eventCount.Should().BeGreaterThan(requestCount * updatesPerRequest / 2);
+            lastProgress.Should().BeApproximately(1.0f, 0.05f);
+        }
+
+        [Test]
+        public void StressTest_MassiveScale_10KRequests()
+        {
+            // Arrange
+            const int requestCount = 10000;
+            using ProgressableContainer<MockProgressableRequest> largeContainer = new();
+
+            MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
+
+            // Act
+            Stopwatch sw = Stopwatch.StartNew();
+            largeContainer.AddRange(requests);
+            sw.Stop();
+
+            // Assert
+            largeContainer.Count.Should().Be(requestCount);
+            sw.ElapsedMilliseconds.Should().BeLessThan(1000); // Should complete within 1 second
+        }
+
+        [Test]
+        public async Task StressTest_ProgressAccuracy_UnderLoad()
+        {
+            // Arrange
+            const int requestCount = 200;
+            MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestCount).Select(_ => new MockProgressableRequest())];
+
+            _container.AddRange(requests);
+
+            float lastProgress = 0f;
+            _container.Progress.ProgressChanged += (s, e) => lastProgress = e;
+
+            // Act: Set 25% to 0%, 25% to 33%, 25% to 66%, 25% to 100%
+            int quarter = requestCount / 4;
+            for (int i = 0; i < quarter; i++)
+            {
+                requests[i].ReportProgress(0f);
+                requests[i + quarter].ReportProgress(0.33f);
+                requests[i + 2 * quarter].ReportProgress(0.66f);
+                requests[i + 3 * quarter].ReportProgress(1.0f);
+            }
+
+            await Task.Delay(100);
+
+            // Assert: Average should be (0 + 0.33 + 0.66 + 1.0) / 4 = 0.4975
+            float expectedAverage = (0f + 0.33f + 0.66f + 1.0f) / 4f;
+            lastProgress.Should().BeApproximately(expectedAverage, 0.01f);
+        }
+
+        [Test]
+        public async Task StressTest_MemoryEfficiency_NoLeaks()
+        {
+            // Arrange
+            const int cycles = 10;
+            const int requestsPerCycle = 100;
+
+            // Act
+            for (int cycle = 0; cycle < cycles; cycle++)
+            {
+                MockProgressableRequest[] requests = [.. Enumerable.Range(0, requestsPerCycle).Select(_ => new MockProgressableRequest())];
+
+                _container.AddRange(requests);
+
+                // Report some progress
+                foreach (MockProgressableRequest request in requests)
+                    request.ReportProgress(0.5f);
+
+                await Task.Delay(10);
+
+                // Remove all
+                _container.Remove(requests);
+            }
+
+            await Task.Delay(100);
+
+            // Assert
+            _container.Count.Should().Be(0);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        [Test]
+        public async Task StressTest_EdgeCase_ZeroRequests_RapidAddRemove()
+        {
+            // Arrange
+            List<float> progressValues = [];
+            _container.Progress.ProgressChanged += (s, e) => progressValues.Add(e);
+
+            // Act
+            for (int i = 0; i < 100; i++)
+            {
+                MockProgressableRequest request = new();
+                _container.Add(request);
+                request.ReportProgress(0.5f);
+                _container.Remove(request);
+            }
+
+            await Task.Delay(100);
+
+            // Assert
+            _container.Count.Should().Be(0);
+        }
+
         #endregion
     }
 }
