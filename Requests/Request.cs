@@ -287,6 +287,9 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
+            if (!ShouldExecute())
+                return;
+
             // Check if we're resuming a paused execution
             if (_hasPausedExecution)
             {
@@ -296,12 +299,13 @@ namespace Requests
                 {
                     _hasPausedExecution = false;
 
-                    // Create new running source for this resume
+                    if (!_stateMachine.TryTransition(RequestState.Running))
+                        return;
+
                     _runningSourceVersion++;
                     _runningSource.Reset();
 
                     // Resume the paused execution
-                    _stateMachine.TryTransition(RequestState.Running);
                     tcs.TrySetResult(true);
 
                     // Wait for the resumed execution to stop running
@@ -309,6 +313,9 @@ namespace Requests
                     return;
                 }
             }
+
+            if (!_stateMachine.TryTransition(RequestState.Running))
+                return;
 
             // Fresh start, reset running source for this execution
             _runningSourceVersion++;
@@ -333,14 +340,6 @@ namespace Requests
 
             try
             {
-                // Entry checkpoint
-                await YieldAsync().ConfigureAwait(false);
-
-                if (!ShouldExecute())
-                    return;
-
-                _stateMachine.TryTransition(RequestState.Running);
-
                 // Recreate CTS if we're restarting after handler cancellation
                 if (_requestCts.IsCancellationRequested && Options.CancellationToken?.IsCancellationRequested == false)
                 {
@@ -500,10 +499,6 @@ namespace Requests
 
                 // Wait for resume
                 await tcs.Task.ConfigureAwait(false);
-
-                // We've been resumed, prepare new running source
-                _runningSourceVersion++;
-                _runningSource.Reset();
             }
         }
 

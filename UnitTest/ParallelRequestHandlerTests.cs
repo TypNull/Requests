@@ -130,6 +130,7 @@ namespace UnitTest
         public void Remove_ExistingRequest_ShouldDecreaseCount()
         {
             // Arrange
+            _handler.Pause(); // Pause to prevent immediate execution
             OwnRequest request = CreateTestRequest();
             _handler.Add(request);
 
@@ -137,7 +138,6 @@ namespace UnitTest
             _handler.Remove(request);
 
             // Assert
-            // Remove is void, so we just verify the count decreased
             _handler.Count.Should().Be(0);
 
             // Clean up
@@ -169,10 +169,8 @@ namespace UnitTest
         {
             // Arrange
             OwnRequest request = CreateTestRequest();
-            _handler.Add(request);
 
             // Act
-            _handler.Start();
             _handler.Add(request);
             await request.Task;
 
@@ -188,10 +186,8 @@ namespace UnitTest
         {
             // Arrange
             OwnRequest[] requests = [CreateTestRequest(), CreateTestRequest()];
-            _handler.AddRange(requests);
 
             // Act
-            _handler.Start();
             _handler.AddRange(requests);
             await Task.WhenAll(requests.Select(r => r.Task));
 
@@ -214,13 +210,14 @@ namespace UnitTest
         public void StateChanged_WhenStateChanges_ShouldFireEvent()
         {
             // Arrange
-            List<RequestState> stateChanges = new();
+            List<RequestState> stateChanges = [];
             _handler.StateChanged += (sender, state) => stateChanges.Add(state);
 
             // Act
             _handler.Pause();
 
             // Assert
+            stateChanges.Should().NotBeEmpty();
             stateChanges.Should().Contain(RequestState.Paused);
         }
 
@@ -232,11 +229,12 @@ namespace UnitTest
         public void Enumerate_WithRequests_ShouldReturnAllRequests()
         {
             // Arrange
-            OwnRequest[] requests = new[] { CreateTestRequest(), CreateTestRequest() };
+            _handler.Pause();
+            OwnRequest[] requests = [CreateTestRequest(), CreateTestRequest()];
             _handler.AddRange(requests);
 
             // Act
-            List<IRequest> enumerated = _handler.ToList();
+            List<IRequest> enumerated = [.. _handler];
 
             // Assert
             enumerated.Should().HaveCount(2);
@@ -272,13 +270,18 @@ namespace UnitTest
         }
 
         [Test]
-        public void HasCompleted_CancelledHandler_ShouldReturnFalse()
+        public void HasCompleted_CancelledHandlerWithRequests_ShouldReturnFalse()
         {
             // Arrange
+            OwnRequest request = CreateTestRequest();
+            _handler.Add(request);
             _handler.Cancel();
 
             // Act & Assert
             _handler.HasCompleted().Should().BeFalse();
+
+            // Clean up
+            request.Dispose();
         }
 
         [Test]
