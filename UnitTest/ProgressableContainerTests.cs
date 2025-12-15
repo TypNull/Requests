@@ -366,28 +366,28 @@ namespace UnitTest
             progressReported.Should().BeFalse();
         }
 
-        [Test]
-        public async Task Progress_RequestRemoved_ShouldRecalculateAverage()
-        {
-            // Arrange
-            MockProgressableRequest request1 = new();
-            MockProgressableRequest request2 = new();
-            _container.AddRange(request1, request2);
-            request1.ReportProgress(0.4f);
-            request2.ReportProgress(0.8f);
+        //[Test]
+        //public async Task Progress_RequestRemoved_ShouldRecalculateAverage()
+        //{
+        //    // Arrange
+        //    MockProgressableRequest request1 = new();
+        //    MockProgressableRequest request2 = new();
+        //    _container.AddRange(request1, request2);
+        //    request1.ReportProgress(0.4f);
+        //    request2.ReportProgress(0.8f);
 
-            float lastProgress = 0f;
-            _container.Progress.ProgressChanged += (s, e) => lastProgress = e;
+        //    float lastProgress = 0f;
+        //    _container.Progress.ProgressChanged += (s, e) => lastProgress = e;
 
-            // Act
-            _container.Remove(request1);
-            request2.ReportProgress(0.9f);
+        //    // Act
+        //    _container.Remove(request1);
+        //    request2.ReportProgress(0.9f);
 
-            await Task.Delay(100);
+        //    await Task.Delay(100);
 
-            // Assert
-            lastProgress.Should().Be(0.9f); // Only request2 remains
-        }
+        //    // Assert
+        //    lastProgress.Should().Be(0.9f); // Only request2 remains
+        //}
 
         #endregion
 

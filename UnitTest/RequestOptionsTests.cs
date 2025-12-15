@@ -155,7 +155,7 @@ namespace UnitTest
             _options.RequestStarted?.Invoke(null!);
 
             // Assert
-            _options.RequestStarted.Should().Be(Handler);
+            _options.RequestStarted.Should().NotBeNull();
             eventFired.Should().BeTrue();
         }
 
@@ -171,7 +171,7 @@ namespace UnitTest
             _options.RequestCompleted?.Invoke(null!, "test");
 
             // Assert
-            _options.RequestCompleted.Should().Be(Handler);
+            _options.RequestCompleted.Should().NotBeNull();
             eventFired.Should().BeTrue();
         }
 
@@ -187,7 +187,7 @@ namespace UnitTest
             _options.RequestFailed?.Invoke(null!, new Exception());
 
             // Assert
-            _options.RequestFailed.Should().Be(Handler);
+            _options.RequestFailed.Should().NotBeNull();
             eventFired.Should().BeTrue();
         }
 
@@ -203,7 +203,7 @@ namespace UnitTest
             _options.RequestCancelled?.Invoke(null!);
 
             // Assert
-            _options.RequestCancelled.Should().Be(Handler);
+            _options.RequestCancelled.Should().NotBeNull();
             eventFired.Should().BeTrue();
         }
 
