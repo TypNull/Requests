@@ -8,6 +8,8 @@
     /// Request handlers are responsible for coordinating the execution of multiple requests, providing
     /// shared resources such as cancellation tokens and synchronization contexts, and managing the overall
     /// lifecycle of request processing.
+    /// </para>
+    /// </remarks>
     public interface IRequestHandler : IRequestContainer<IRequest>
     {
         /// <summary>
