@@ -271,8 +271,6 @@ public class SequentialRequestHandler : IRequestHandler, IAsyncEnumerable<IReque
         if (State != RequestState.Idle)
             return;
 
-        Console.WriteLine("Start RunRequests()");
-
         _task = Task.Run(async () =>
         {
             try

@@ -1,5 +1,3 @@
-using Requests.Options;
-
 namespace UnitTest
 {
     /// <summary>
@@ -198,7 +196,7 @@ namespace UnitTest
             });
             capturedRequest = request;
 
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await yieldStarted.Task;
 
             // Act
@@ -454,7 +452,7 @@ namespace UnitTest
             await Task.Delay(500);
 
             // Assert
-            executionOrder.Should().ContainInOrder(1, 2, 3, 4);
+            executionOrder.Should().ContainInOrder([1, 2, 3, 4]);
         }
 
         #endregion
@@ -480,7 +478,7 @@ namespace UnitTest
 
             // Act
             DateTime startTime = DateTime.Now;
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
             TimeSpan elapsed = DateTime.Now - startTime;
 
@@ -513,7 +511,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -539,7 +537,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -561,7 +559,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -569,7 +567,7 @@ namespace UnitTest
         }
 
         [Test]
-        public async Task YieldAsync_WithException_ShouldPropagateException()
+        public async Task YieldAsync_WithException_ShouldAddExceptionToList()
         {
             // Arrange
             using OwnRequest request = new(async token =>
@@ -579,12 +577,15 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
-            Func<Task> act = async () => await request.Task;
+            using ParallelRequestHandler handler = new([request]);
+            await request;
 
             // Assert
-            await act.Should().ThrowAsync<InvalidOperationException>();
+            request.Exception.Should().NotBeNull();
+            request.Exception!.InnerExceptions.First().Should().BeOfType<InvalidOperationException>();
+            request.Exception!.InnerExceptions.First().Message.Should().Be("Test exception");
         }
+
 
         [Test]
         public async Task YieldAsync_InTryFinally_ShouldExecuteFinally()
@@ -606,7 +607,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -634,7 +635,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
@@ -663,7 +664,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert - Note: Context may not be preserved across yields, which is expected
@@ -684,7 +685,7 @@ namespace UnitTest
             });
 
             // Act
-            using var handler = new ParallelRequestHandler(); handler.Add(request);
+            using ParallelRequestHandler handler = new ParallelRequestHandler(); handler.Add(request);
             await request.Task;
 
             // Assert
