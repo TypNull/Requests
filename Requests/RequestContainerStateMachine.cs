@@ -68,7 +68,7 @@ namespace Requests
             (RequestState.Running, RequestState.Idle or RequestState.Paused or RequestState.Cancelled) => true,
 
             // From Paused
-            (RequestState.Paused, RequestState.Idle or RequestState.Cancelled) => true,
+            (RequestState.Paused, RequestState.Idle or RequestState.Running or RequestState.Cancelled) => true,
 
             // From Cancelled
             (RequestState.Cancelled, RequestState.Idle) => true,

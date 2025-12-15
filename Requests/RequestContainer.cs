@@ -1,4 +1,4 @@
-﻿using Requests.Options;
+using Requests.Options;
 using System.Collections;
 using System.Runtime.CompilerServices;
 
@@ -12,8 +12,6 @@ namespace Requests
     {
         private volatile TRequest[] _requests = [];
         private int _count;
-        private bool _isRunning = true;
-        private bool _isCanceled = false;
         private bool _disposed = false;
         private TaskCompletionSource? _task;
         private CancellationTokenSource _taskCancellationTokenSource = new();
@@ -107,12 +105,7 @@ namespace Requests
                     _requests[key].StateChanged -= OnRequestStateChanged;
                     _requests[key] = value;
 
-                    if (_isCanceled)
-                        _requests[key].Cancel();
-                    else if (_disposed)
-                        _requests[key].Dispose();
-                    else if (!_isRunning)
-                        _requests[key].Pause();
+                    ApplyCurrentStateToRequest(_requests[key]);
 
                     _requests[key].StateChanged += OnRequestStateChanged;
                     NewTaskCompletion();
@@ -135,19 +128,43 @@ namespace Requests
         }
 
         /// <summary>
+        /// Applies the container's current state to a request.
+        /// </summary>
+        /// <param name="request">The request to apply state to.</param>
+        private void ApplyCurrentStateToRequest(TRequest request)
+        {
+            if (_disposed)
+            {
+                request.Dispose();
+                return;
+            }
+
+            switch (State)
+            {
+                case RequestState.Cancelled:
+                    request.Cancel();
+                    break;
+                case RequestState.Paused:
+                case RequestState.Idle:
+                case RequestState.Waiting:
+                case RequestState.Completed:
+                case RequestState.Failed:
+                    request.Pause();
+                    break;
+                case RequestState.Running:
+                    request.Start();
+                    break;
+            }
+        }
+
+        /// <summary>
         /// Incorporates a <see cref="IRequest"/> into the <see cref="RequestContainer{TRequest}"/>.
         /// </summary>
         /// <param name="request">The <see cref="IRequest"/> to be incorporated.</param>
         public virtual void Add(TRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
-
-            if (_isCanceled)
-                request.Cancel();
-            else if (_disposed)
-                request.Dispose();
-            else if (!_isRunning)
-                request.Pause();
+            ApplyCurrentStateToRequest(request);
 
             request.StateChanged += OnRequestStateChanged;
 
@@ -180,24 +197,11 @@ namespace Requests
         {
             ArgumentNullException.ThrowIfNull(requests);
 
-            if (_isCanceled)
-            {
-                foreach (TRequest request in requests)
-                    request.Cancel();
-            }
-            else if (_disposed)
-            {
-                foreach (TRequest request in requests)
-                    request.Dispose();
-            }
-            else if (!_isRunning)
-            {
-                foreach (TRequest request in requests)
-                    request.Pause();
-            }
-
             foreach (TRequest request in requests)
+            {
+                ApplyCurrentStateToRequest(request);
                 request.StateChanged += OnRequestStateChanged;
+            }
 
             // Acquire write lock with spin
             while (Interlocked.CompareExchange(ref _writeInProgress, 1, 0) == 1)
@@ -365,10 +369,10 @@ namespace Requests
         /// </summary>
         public void Start()
         {
-            if (_isRunning)
+            if (State == RequestState.Running)
                 return;
 
-            _isRunning = true;
+            State = RequestState.Running;
 
             foreach (TRequest request in GetStored())
                 request.Start();
@@ -379,7 +383,10 @@ namespace Requests
         /// </summary>
         public void Pause()
         {
-            _isRunning = false;
+            if (State == RequestState.Paused)
+                return;
+
+            State = RequestState.Paused;
 
             foreach (TRequest request in GetStored())
                 request.Pause();
@@ -390,7 +397,10 @@ namespace Requests
         /// </summary>
         public void Cancel()
         {
-            _isCanceled = true;
+            if (State == RequestState.Cancelled)
+                return;
+
+            State = RequestState.Cancelled;
 
             foreach (TRequest request in GetStored())
                 request.Cancel();
@@ -443,10 +453,10 @@ namespace Requests
         /// </summary>
         async Task IRequest.StartRequestAsync()
         {
-            if (_isRunning)
+            if (State == RequestState.Running)
                 return;
 
-            _isRunning = true;
+            State = RequestState.Running;
 
             foreach (TRequest request in GetStored())
             {
@@ -457,7 +467,8 @@ namespace Requests
             foreach (TRequest request in GetStored().Where(x => x.State == RequestState.Idle))
                 await request.StartRequestAsync().ConfigureAwait(false);
 
-            _isRunning = false;
+            // Recalculate state after execution
+            State = CalculateState();
         }
 
 
