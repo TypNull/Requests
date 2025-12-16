@@ -1,4 +1,3 @@
-
 using System.Runtime.CompilerServices;
 
 namespace Requests
@@ -14,7 +13,7 @@ namespace Requests
         /// <summary>
         /// Gets the current request context.
         /// </summary>
-        internal static IRequest? Current => _current.Value;
+        public static IRequest? Current => _current.Value;
 
         /// <summary>
         /// Sets the current request context.
@@ -35,16 +34,26 @@ namespace Requests
     /// <summary>
     /// Provides an awaitable type that enables yielding in request contexts.
     /// </summary>
-    public readonly struct YieldAwaitable : ICriticalNotifyCompletion
+    public readonly struct YieldAwaitable
     {
         private readonly IRequest? _context;
 
         internal YieldAwaitable(IRequest? context) => _context = context;
 
         /// <summary>
-        /// Gets an awaiter for this awaitable (returns itself).
+        /// Gets an awaiter for this awaitable.
         /// </summary>
-        public YieldAwaitable GetAwaiter() => this;
+        public YieldAwaiter GetAwaiter() => new(_context);
+    }
+
+    /// <summary>
+    /// Provides an awaiter that handles yielding in request contexts.
+    /// </summary>
+    public readonly struct YieldAwaiter : ICriticalNotifyCompletion
+    {
+        private readonly IRequest? _context;
+
+        internal YieldAwaiter(IRequest? context) => _context = context;
 
         /// <summary>
         /// Returns true if there's no context (completes synchronously as no-op).
@@ -64,7 +73,16 @@ namespace Requests
         public void OnCompleted(Action continuation)
         {
             ArgumentNullException.ThrowIfNull(continuation);
-            _ = ScheduleContinuationAsync(_context!, continuation);
+
+            ExecutionContext? ctx = ExecutionContext.Capture();
+            if (ctx == null)
+            {
+                UnsafeOnCompleted(continuation);
+            }
+            else
+            {
+                UnsafeOnCompleted(() => ExecutionContext.Run(ctx, static s => ((Action)s!)(), continuation));
+            }
         }
 
         /// <summary>
@@ -74,24 +92,7 @@ namespace Requests
         public void UnsafeOnCompleted(Action continuation)
         {
             ArgumentNullException.ThrowIfNull(continuation);
-            _ = ScheduleContinuationAsync(_context!, continuation);
-        }
-
-        /// <summary>
-        /// Schedules the continuation after yielding through the request context.
-        /// </summary>
-        private static async Task ScheduleContinuationAsync(IRequest context, Action continuation)
-        {
-            try
-            {
-                await context.YieldAsync().ConfigureAwait(false);
-                continuation();
-            }
-            catch
-            {
-                // Still invoke continuation to prevent deadlock
-                continuation();
-            }
+            _context!.YieldAsync().ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(continuation);
         }
     }
 }

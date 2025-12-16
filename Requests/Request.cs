@@ -20,7 +20,6 @@ namespace Requests
         private CancellationTokenRegistration _ctr;
 
         private TaskCompletionSource<bool>? _pauseTcs;
-        private volatile bool _hasPausedExecution;
 
         private readonly RequestStateMachine _stateMachine;
 
@@ -291,27 +290,21 @@ namespace Requests
                 return;
 
             // Check if we're resuming a paused execution
-            if (_hasPausedExecution)
+            TaskCompletionSource<bool>? tcs = Interlocked.Exchange(ref _pauseTcs, null);
+            if (tcs != null)
             {
-                // Get and clear the pause TCS atomically
-                TaskCompletionSource<bool>? tcs = Interlocked.Exchange(ref _pauseTcs, null);
-                if (tcs != null)
-                {
-                    _hasPausedExecution = false;
-
-                    if (!_stateMachine.TryTransition(RequestState.Running))
-                        return;
-
-                    _runningSourceVersion++;
-                    _runningSource.Reset();
-
-                    // Resume the paused execution
-                    tcs.TrySetResult(true);
-
-                    // Wait for the resumed execution to stop running
-                    await new ValueTask(this, _runningSourceVersion).ConfigureAwait(false);
+                if (!_stateMachine.TryTransition(RequestState.Running))
                     return;
-                }
+
+                _runningSourceVersion++;
+                _runningSource.Reset();
+
+                // Resume the paused execution
+                tcs.TrySetResult(true);
+
+                // Wait for the resumed execution to stop running
+                await new ValueTask(this, _runningSourceVersion).ConfigureAwait(false);
+                return;
             }
 
             if (!_stateMachine.TryTransition(RequestState.Running))
@@ -492,10 +485,8 @@ namespace Requests
 
             if (State == RequestState.Paused)
             {
-                // Lazy-create pause TCS only when actually pausing
-                TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                _pauseTcs = tcs;
-                _hasPausedExecution = true;
+                TaskCompletionSource<bool> tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                tcs = Interlocked.CompareExchange(ref _pauseTcs, tcs, null) ?? tcs;
 
                 // Wait for resume
                 await tcs.Task.ConfigureAwait(false);
@@ -573,7 +564,7 @@ namespace Requests
             _requestCts?.Dispose();
             _ctr.Dispose();
             _completionSource.TrySetCanceled();
-            _pauseTcs?.TrySetCanceled();
+            Interlocked.Exchange(ref _pauseTcs, null)?.TrySetCanceled();
 
             GC.SuppressFinalize(this);
         }
