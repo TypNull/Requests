@@ -320,7 +320,7 @@ namespace UnitTest
             {
                 await Task.Delay(10, token);
                 return true;
-            }, new RequestOptions<object, object>
+            }, new RequestOptions
             {
                 Handler = _handler,  // Use the test's handler, NOT the shared static one!
                 AutoStart = autoStart

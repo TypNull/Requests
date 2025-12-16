@@ -31,7 +31,7 @@ namespace UnitTest
         /// </summary>
         private OwnRequest CreateParallelRequest(Func<CancellationToken, Task<bool>> work, bool autoStart = true)
         {
-            return new OwnRequest(work, new RequestOptions<object, object>
+            return new OwnRequest(work, new RequestOptions
             {
                 Handler = _parallelHandler,
                 AutoStart = autoStart
@@ -43,7 +43,7 @@ namespace UnitTest
         /// </summary>
         private OwnRequest CreateSequentialRequest(Func<CancellationToken, Task<bool>> work, bool autoStart = true)
         {
-            return new OwnRequest(work, new RequestOptions<object, object>
+            return new OwnRequest(work, new RequestOptions
             {
                 Handler = _sequentialHandler,
                 AutoStart = autoStart
@@ -211,9 +211,10 @@ namespace UnitTest
         {
             // Act
             YieldAwaitable yielder = Request.Yield();
+            var awaiter = yielder.GetAwaiter();
 
             // Assert
-            yielder.IsCompleted.Should().BeTrue("Should complete immediately outside request context");
+            awaiter.IsCompleted.Should().BeTrue("Should complete immediately outside request context");
             await yielder;
         }
 
@@ -282,33 +283,34 @@ namespace UnitTest
         #region YieldAwaitable Pattern Tests
 
         [Test]
-        public void YieldAwaitable_GetAwaiter_ShouldReturnSelf()
+        public void YieldAwaitable_GetAwaiter_ShouldReturnAwaiter()
         {
             // Arrange
             YieldAwaitable awaitable = Request.Yield();
 
             // Act
-            YieldAwaitable awaiter = awaitable.GetAwaiter();
+            YieldAwaiter awaiter = awaitable.GetAwaiter();
 
             // Assert
-            awaiter.Should().Be(awaitable);
+            awaiter.Should().NotBeNull();
         }
 
         [Test]
-        public void YieldAwaitable_GetResult_ShouldNotThrow()
+        public void YieldAwaiter_GetResult_ShouldNotThrow()
         {
             // Arrange
             YieldAwaitable awaitable = Request.Yield();
+            var awaiter = awaitable.GetAwaiter();
 
             // Act
-            Action act = () => awaitable.GetResult();
+            Action act = () => awaiter.GetResult();
 
             // Assert
             act.Should().NotThrow();
         }
 
         [Test]
-        public async Task YieldAwaitable_OnCompleted_ShouldInvokeContinuation()
+        public async Task YieldAwaiter_OnCompleted_ShouldInvokeContinuation()
         {
             // Arrange
             bool continuationCalled = false;
@@ -319,11 +321,12 @@ namespace UnitTest
             });
 
             YieldAwaitable awaitable = Request.Yield();
+            var awaiter = awaitable.GetAwaiter();
 
             // Act
-            if (!awaitable.IsCompleted)
+            if (!awaiter.IsCompleted)
             {
-                awaitable.OnCompleted(() => continuationCalled = true);
+                awaiter.OnCompleted(() => continuationCalled = true);
                 await Task.Delay(100);
             }
             else
@@ -336,16 +339,17 @@ namespace UnitTest
         }
 
         [Test]
-        public async Task YieldAwaitable_UnsafeOnCompleted_ShouldInvokeContinuation()
+        public async Task YieldAwaiter_UnsafeOnCompleted_ShouldInvokeContinuation()
         {
             // Arrange
             bool continuationCalled = false;
             YieldAwaitable awaitable = Request.Yield();
+            var awaiter = awaitable.GetAwaiter();
 
             // Act
-            if (!awaitable.IsCompleted)
+            if (!awaiter.IsCompleted)
             {
-                awaitable.UnsafeOnCompleted(() => continuationCalled = true);
+                awaiter.UnsafeOnCompleted(() => continuationCalled = true);
                 await Task.Delay(100);
             }
             else
@@ -358,26 +362,28 @@ namespace UnitTest
         }
 
         [Test]
-        public void YieldAwaitable_OnCompleted_NullContinuation_ShouldThrowArgumentNullException()
+        public void YieldAwaiter_OnCompleted_NullContinuation_ShouldThrowArgumentNullException()
         {
             // Arrange
             YieldAwaitable awaitable = Request.Yield();
+            var awaiter = awaitable.GetAwaiter();
 
             // Act
-            Action act = () => awaitable.OnCompleted(null!);
+            Action act = () => awaiter.OnCompleted(null!);
 
             // Assert
             act.Should().Throw<ArgumentNullException>();
         }
 
         [Test]
-        public void YieldAwaitable_UnsafeOnCompleted_NullContinuation_ShouldThrowArgumentNullException()
+        public void YieldAwaiter_UnsafeOnCompleted_NullContinuation_ShouldThrowArgumentNullException()
         {
             // Arrange
             YieldAwaitable awaitable = Request.Yield();
+            var awaiter = awaitable.GetAwaiter();
 
             // Act
-            Action act = () => awaitable.UnsafeOnCompleted(null!);
+            Action act = () => awaiter.UnsafeOnCompleted(null!);
 
             // Assert
             act.Should().Throw<ArgumentNullException>();

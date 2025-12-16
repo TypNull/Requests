@@ -7,7 +7,7 @@ namespace UnitTest
     public class RequestTests
     {
         private TestRequest _request = null!;
-        private RequestOptions<string, Exception> _options = null!;
+        private RequestOptions _options = null!;
         private ParallelRequestHandler _handler = null!;
 
         [SetUp]
@@ -15,12 +15,12 @@ namespace UnitTest
         {
             _handler = [];
 
-            _options = new RequestOptions<string, Exception>
+            _options = new RequestOptions
             {
                 Handler = _handler,
                 NumberOfAttempts = 3,
                 Priority = RequestPriority.High,
-                DelayBetweenAttemps = TimeSpan.FromMilliseconds(10),
+                DelayBetweenAttempts = TimeSpan.FromMilliseconds(10),
                 AutoStart = false
             };
             _request = new TestRequest(_options);
@@ -35,13 +35,13 @@ namespace UnitTest
 
         #region Test Helper Class
 
-        private class TestRequest : Request<RequestOptions<string, Exception>, string, Exception>
+        private class TestRequest : Request<RequestOptions, string, Exception>
         {
             public bool ShouldSucceed { get; set; } = true;
             public bool ShouldThrow { get; set; } = false;
             public int ExecutionCount { get; private set; } = 0;
 
-            public TestRequest(RequestOptions<string, Exception> options) : base(options)
+            public TestRequest(RequestOptions options) : base(options)
             {
             }
 
@@ -79,7 +79,7 @@ namespace UnitTest
         {
             // Arrange
             using ParallelRequestHandler handler = [];
-            RequestOptions<string, Exception> options = new() { Handler = handler, AutoStart = false };
+            RequestOptions options = new() { Handler = handler, AutoStart = false };
 
             // Act
             TestRequest request = new(options);
@@ -227,6 +227,36 @@ namespace UnitTest
             stateChanges.Should().Contain(RequestState.Idle, "request should transition to Idle when started");
             stateChanges.Should().Contain(RequestState.Running, "request should transition to Running when picked up by handler");
             stateChanges.Should().ContainInOrder(RequestState.Idle, RequestState.Running);
+        }
+
+        [Test]
+        public async Task RequestEvents_DuringExecution_ShouldFire()
+        {
+            // Arrange
+            bool startedFired = false;
+            bool completedFired = false;
+            string? completedResult = null;
+
+            _request.Started += (req) => startedFired = true;
+            _request.Completed += (req, result) =>
+            {
+                completedFired = true;
+                completedResult = result;
+            };
+
+            _request.ShouldSucceed = true;
+
+            // Act
+            _request.Start();
+            await _request.Task;
+
+            // Give events time to be marshaled
+            await Task.Delay(50);
+
+            // Assert
+            startedFired.Should().BeTrue("Started event should fire");
+            completedFired.Should().BeTrue("Completed event should fire");
+            completedResult.Should().NotBeNull("Completed event should include result");
         }
 
         #endregion

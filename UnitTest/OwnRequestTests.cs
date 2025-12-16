@@ -65,7 +65,7 @@ namespace UnitTest
         public void OwnRequest_WithCancellation_ShouldCancel()
         {
             // Arrange
-            RequestOptions<object, object> options = new()
+            RequestOptions options = new()
             {
                 AutoStart = false
             };
