@@ -1,75 +1,45 @@
-﻿namespace Requests.Options
+namespace Requests.Options
 {
     /// <summary>
-    /// A record that implements the <see cref="IRequestOptions{TCompleted, TFailed}"/> interface.
+    /// A record that implements the <see cref="IRequestOptions"/> interface.
+    /// Provides configuration for request execution behavior.
     /// </summary>
-    /// <typeparam name="TCompleted">The return type if the request is completed successfully.</typeparam>
-    /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
-    public record RequestOptions<TCompleted, TFailed> : IRequestOptions<TCompleted, TFailed>
+    public record RequestOptions : IRequestOptions
     {
+        private IRequest? _subsequentRequest;
+
         /// <inheritdoc />
-        public bool AutoStart { get; set; } = true;
+        public bool AutoStart { get; init; } = true;
 
-        ///<inheritdoc />
-        public RequestPriority Priority { get; set; } = RequestPriority.Normal;
+        /// <inheritdoc />
+        public RequestPriority Priority { get; init; } = RequestPriority.Normal;
 
-        ///<inheritdoc />
-        public CancellationToken? CancellationToken { get; set; }
+        /// <inheritdoc />
+        public CancellationToken CancellationToken { get; init; }
 
-        ///<inheritdoc />
-        public TimeSpan? DeployDelay { get; set; } = null;
+        /// <inheritdoc />
+        public TimeSpan? DeployDelay { get; set; }
 
-        ///<inheritdoc />
-        public IRequestHandler? Handler { get; set; } = ParallelRequestHandler.MainRequestHandler;
+        /// <inheritdoc />
+        public IRequestHandler? Handler { get; init; } = ParallelRequestHandler.MainRequestHandler;
 
-        ///<inheritdoc />
-        public byte NumberOfAttempts { get; set; } = 3;
+        /// <inheritdoc />
+        public byte NumberOfAttempts { get; init; } = 3;
 
-        ///<inheritdoc />
-        public TimeSpan? DelayBetweenAttemps { get; set; } = null;
+        /// <inheritdoc />
+        public TimeSpan? DelayBetweenAttempts { get; init; }
 
-        ///<inheritdoc />
-        public IRequest? SubsequentRequest { get; set; }
-
-        ///<inheritdoc />
-        public Action<IRequest>? RequestStarted { get; set; }
-
-        ///<inheritdoc />
-        public Action<IRequest, TCompleted>? RequestCompleted { get; set; }
-
-        ///<inheritdoc />
-        public Action<IRequest, TFailed>? RequestFailed { get; set; }
-
-        ///<inheritdoc />
-        public Action<IRequest>? RequestCancelled { get; set; }
-
-        ///<inheritdoc />
-        public Action<IRequest, Exception>? RequestExceptionOccurred { get; set; }
-
-        /// <summary>
-        /// Copy constructor for the RequestOptions record.
-        /// </summary>
-        /// <param name="options">The RequestOptions instance to copy from.</param>
-        protected RequestOptions(RequestOptions<TCompleted, TFailed> options)
+        /// <inheritdoc />
+        public IRequest? SubsequentRequest
         {
-            Priority = options.Priority;
-            Handler = options.Handler;
-            NumberOfAttempts = options.NumberOfAttempts;
-            CancellationToken = options.CancellationToken;
-            AutoStart = options.AutoStart;
-            DelayBetweenAttemps = options.DelayBetweenAttemps;
-            DeployDelay = options.DeployDelay;
-            SubsequentRequest = options.SubsequentRequest;
-            RequestCancelled += options.RequestCancelled;
-            RequestStarted += options.RequestStarted;
-            RequestFailed += options.RequestFailed;
-            RequestCompleted += options.RequestCompleted;
-            RequestExceptionOccurred += options.RequestExceptionOccurred;
-        }
+            get => _subsequentRequest;
+            set
+            {
+                if (value?.HasCompleted() == true)
+                    throw new ArgumentException("Cannot set a completed request as subsequent request.", nameof(value));
 
-        /// <summary>
-        /// Default constructor for the RequestOptions record.
-        /// </summary>
-        public RequestOptions() { }
+                _subsequentRequest = value;
+            }
+        }
     }
 }

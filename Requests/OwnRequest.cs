@@ -5,7 +5,7 @@ namespace Requests
     /// <summary>
     /// A class that simplifies implementing <see cref="Request{TOptions, TCompleted, TFailed}"/> functionality without creating a new child of <see cref="Request{TOptions, TCompleted, TFailed}"/>.
     /// </summary>
-    public class OwnRequest : Request<RequestOptions<object, object>, object, object>
+    public class OwnRequest : Request<RequestOptions, object, object>
     {
         private readonly Func<CancellationToken, Task<bool>> _own;
 
@@ -14,7 +14,7 @@ namespace Requests
         /// </summary>
         /// <param name="own">Function that contains the request logic.</param>
         /// <param name="requestOptions">Options to modify the behavior of <see cref="OwnRequest"/>.</param>
-        public OwnRequest(Func<CancellationToken, Task<bool>> own, RequestOptions<object, object>? requestOptions = null) : base(requestOptions)
+        public OwnRequest(Func<CancellationToken, Task<bool>> own, RequestOptions? requestOptions = null) : base(requestOptions)
         {
             _own = own;
             AutoStart();

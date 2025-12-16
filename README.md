@@ -13,12 +13,12 @@ orchestrators, and complex data pipelines.
 
 ### Key Features
 
-**Priority Scheduling**: High-priority requests jump the queue automatically
-**Smart Retries**: Configurable retry logic with exponential backoff
-**Pause & Resume**: Stop and restart long-running operations without data loss
-**Progress Tracking**: Real-time aggregated progress across multiple operations
-**Dynamic Parallelism**: Auto-adjusts concurrency based on system load
-**Zero Lock-in**: Simple wrapper pattern around your existing async code
+- **Priority Scheduling**: High-priority requests jump the queue automatically
+- **Smart Retries**: Configurable retry logic with exponential backoff
+- **Pause & Resume**: Stop and restart long-running operations without data loss
+- **Progress Tracking**: Real-time aggregated progress across multiple operations
+- **Dynamic Parallelism**: Auto-adjusts concurrency based on system load
+- **Zero Lock-in**: Simple wrapper pattern around your existing async code
 
 ## Quick Start
 

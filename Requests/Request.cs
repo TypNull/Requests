@@ -9,14 +9,14 @@ namespace Requests
     /// Base class for requests that can be managed by the <see cref="ParallelRequestHandler"/>.
     /// </summary>
     public abstract partial class Request<TOptions, TCompleted, TFailed> : IRequest, IValueTaskSource
-        where TOptions : RequestOptions<TCompleted, TFailed>, new()
+        where TOptions : RequestOptions, new()
     {
         private bool _disposed;
         private readonly TaskCompletionSource _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private ManualResetValueTaskSourceCore<bool> _runningSource;
         private short _runningSourceVersion;
         private readonly List<Exception> _exceptions = [];
-        private CancellationTokenSource _requestCts = null!;
+        private CancellationTokenSource _requestCts;
         private CancellationTokenRegistration _ctr;
 
         private TaskCompletionSource<bool>? _pauseTcs;
@@ -33,34 +33,34 @@ namespace Requests
         private static readonly SendOrPostCallback s_requestStartedCallback = static state =>
         {
             Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
-            request.Options.RequestStarted?.Invoke(request);
+            request.Started?.Invoke(request);
         };
 
         private static readonly SendOrPostCallback s_requestCancelledCallback = static state =>
         {
             Request<TOptions, TCompleted, TFailed> request = (Request<TOptions, TCompleted, TFailed>)state!;
-            request.Options.RequestCancelled?.Invoke(request);
+            request.Cancelled?.Invoke(request);
         };
 
         private static readonly SendOrPostCallback s_requestCompletedCallback = static state =>
         {
             (Request<TOptions, TCompleted, TFailed> request, TCompleted? result) =
                 ((Request<TOptions, TCompleted, TFailed>, TCompleted))state!;
-            request.Options.RequestCompleted?.Invoke(request, result);
+            request.Completed?.Invoke(request, result);
         };
 
         private static readonly SendOrPostCallback s_requestFailedCallback = static state =>
         {
             (Request<TOptions, TCompleted, TFailed> request, TFailed? result) =
                 ((Request<TOptions, TCompleted, TFailed>, TFailed))state!;
-            request.Options.RequestFailed?.Invoke(request, result);
+            request.Failed?.Invoke(request, result);
         };
 
         private static readonly SendOrPostCallback s_requestExceptionCallback = static state =>
         {
             (Request<TOptions, TCompleted, TFailed> request, Exception? exception) =
                 ((Request<TOptions, TCompleted, TFailed>, Exception))state!;
-            request.Options.RequestExceptionOccurred?.Invoke(request, exception);
+            request.ExceptionOccurred?.Invoke(request, exception);
         };
 
 
@@ -70,14 +70,14 @@ namespace Requests
         protected SynchronizationContext? SynchronizationContext { get; }
 
         /// <summary>
-        /// The options that started this request (immutable).
+        /// The original options that started this request.
         /// </summary>
         public TOptions StartOptions { get; }
 
         /// <summary>
-        /// The current options for this request (mutable).
+        /// The current options for this request mutated while running.
         /// </summary>
-        protected TOptions Options { get; set; }
+        public TOptions Options { get; set; }
 
         /// <summary>
         /// Number of times this request has been attempted.
@@ -99,14 +99,6 @@ namespace Requests
         /// </summary>
         public virtual AggregateException? Exception { get; private set; }
 
-        /// <summary>
-        /// Deployment delay before the request starts execution.
-        /// </summary>
-        public TimeSpan? DeployDelay
-        {
-            get => Options.DeployDelay;
-            set => Options.DeployDelay = value;
-        }
 
         /// <summary>
         /// Current state of the request.
@@ -117,6 +109,31 @@ namespace Requests
         /// Event raised when the request state changes.
         /// </summary>
         public event EventHandler<RequestState>? StateChanged;
+
+        /// <summary>
+        /// Event raised when the request starts execution.
+        /// </summary>
+        public event Action<IRequest>? Started;
+
+        /// <summary>
+        /// Event raised when the request completes successfully.
+        /// </summary>
+        public event Action<IRequest, TCompleted>? Completed;
+
+        /// <summary>
+        /// Event raised when the request fails after all retry attempts.
+        /// </summary>
+        public event Action<IRequest, TFailed>? Failed;
+
+        /// <summary>
+        /// Event raised when the request is cancelled.
+        /// </summary>
+        public event Action<IRequest>? Cancelled;
+
+        /// <summary>
+        /// Event raised when an exception occurs during request execution.
+        /// </summary>
+        public event Action<IRequest, Exception>? ExceptionOccurred;
 
         /// <summary>
         /// Priority of this request.
@@ -152,32 +169,22 @@ namespace Requests
         /// </summary>
         private void OnStateChanged(RequestState oldState, RequestState newState)
         {
-            // Complete running source if we're no longer running
             if (oldState == RequestState.Running && newState != RequestState.Running)
-            {
                 _runningSource.SetResult(true);
-            }
-
-            // Marshal state change to original context
             SynchronizationContext?.Post(s_stateChangedCallback, (this, newState));
         }
 
         /// <summary>
         /// Creates a cancellation token source linked to handler and optional request token.
         /// </summary>
-        private CancellationTokenSource CreateCancellationTokenSource()
-        {
-            if (Options.Handler == null)
+        private CancellationTokenSource CreateCancellationTokenSource() =>
+            (Options.Handler?.CancellationToken.CanBeCanceled == true, Options.CancellationToken.CanBeCanceled) switch
             {
-                return Options.CancellationToken.HasValue
-                    ? CancellationTokenSource.CreateLinkedTokenSource(Options.CancellationToken.Value)
-                    : new CancellationTokenSource();
-            }
-
-            return Options.CancellationToken.HasValue
-                ? CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken, Options.CancellationToken.Value)
-                : CancellationTokenSource.CreateLinkedTokenSource(Options.Handler.CancellationToken);
-        }
+                (true, true) => CancellationTokenSource.CreateLinkedTokenSource(Options.Handler!.CancellationToken, Options.CancellationToken),
+                (true, false) => CancellationTokenSource.CreateLinkedTokenSource(Options.Handler!.CancellationToken),
+                (false, true) => CancellationTokenSource.CreateLinkedTokenSource(Options.CancellationToken),
+                _ => new CancellationTokenSource()
+            };
 
         /// <summary>
         /// Registers cancellation callback.
@@ -194,7 +201,7 @@ namespace Requests
         private void HandleCancellation()
         {
             // If request's own token was cancelled, cancel permanently
-            if (Options.CancellationToken?.IsCancellationRequested == true)
+            if (Options.CancellationToken.IsCancellationRequested)
             {
                 Cancel();
                 return;
@@ -222,10 +229,7 @@ namespace Requests
                 _requestCts.Cancel();
 
             _completionSource.TrySetCanceled();
-
-            // Marshal callback to original context
             SynchronizationContext?.Post(s_requestCancelledCallback, this);
-
             Options.SubsequentRequest?.Cancel();
         }
 
@@ -237,9 +241,9 @@ namespace Requests
             if (State != RequestState.Paused)
                 return;
 
-            if (DeployDelay.HasValue)
+            if (Options.DeployDelay.HasValue)
             {
-                _ = WaitAndDeployAsync(DeployDelay.Value);
+                _ = WaitAndDeployAsync(Options.DeployDelay.Value);
                 return;
             }
 
@@ -334,10 +338,8 @@ namespace Requests
             try
             {
                 // Recreate CTS if we're restarting after handler cancellation
-                if (_requestCts.IsCancellationRequested && Options.CancellationToken?.IsCancellationRequested == false)
-                {
+                if (_requestCts.IsCancellationRequested && !Options.CancellationToken.IsCancellationRequested)
                     await ResetCancellationTokenAsync().ConfigureAwait(false);
-                }
 
                 // Marshal callback to original context
                 SynchronizationContext?.Post(s_requestStartedCallback, this);
@@ -366,7 +368,7 @@ namespace Requests
         private bool ShouldExecute() =>
             State == RequestState.Idle
             && Options.Handler?.CancellationToken.IsCancellationRequested != true
-            && Options.CancellationToken?.IsCancellationRequested != true;
+            && !Options.CancellationToken.IsCancellationRequested;
 
         /// <summary>
         /// Resets the cancellation token source.
@@ -420,7 +422,7 @@ namespace Requests
                 AttemptCounter++;
 
                 // Check if request itself was cancelled
-                if (Options.CancellationToken?.IsCancellationRequested == true)
+                if (Options.CancellationToken.IsCancellationRequested)
                 {
                     _stateMachine.TryTransition(RequestState.Cancelled);
                     _completionSource.TrySetCanceled();
@@ -437,9 +439,9 @@ namespace Requests
                 // Check if we should retry
                 if (AttemptCounter < Options.NumberOfAttempts)
                 {
-                    if (Options.DelayBetweenAttemps.HasValue)
+                    if (Options.DelayBetweenAttempts.HasValue)
                     {
-                        await WaitAndDeployAsync(Options.DelayBetweenAttemps.Value).ConfigureAwait(false);
+                        await WaitAndDeployAsync(Options.DelayBetweenAttempts.Value).ConfigureAwait(false);
                     }
                     else
                     {
@@ -512,18 +514,6 @@ namespace Requests
                 return false;
 
             return _stateMachine.TryTransition(RequestState.Idle);
-        }
-
-        /// <summary>
-        /// Sets a subsequent request to execute after this one completes.
-        /// </summary>
-        public bool TrySetSubsequentRequest(IRequest request)
-        {
-            if (HasCompleted() || request.HasCompleted())
-                return false;
-
-            Options.SubsequentRequest = request;
-            return true;
         }
 
         /// <summary>

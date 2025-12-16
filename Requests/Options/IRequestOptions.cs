@@ -1,80 +1,55 @@
-﻿namespace Requests.Options
+namespace Requests.Options
 {
     /// <summary>
-    /// A generic interface that defines the structure for all <see cref="IRequest"/> types.
+    /// Defines the configuration options for a request.
     /// </summary>
-    /// <typeparam name="TCompleted">The return type if the request is completed successfully.</typeparam>
-    /// <typeparam name="TFailed">The return type if the request fails.</typeparam>
-    public interface IRequestOptions<TCompleted, TFailed>
+    public interface IRequestOptions
     {
         /// <summary>
         /// Determines whether the <see cref="IRequest"/> should be automatically started upon initialization.
         /// </summary>
-        public bool AutoStart { get; set; }
+        bool AutoStart { get; init; }
 
         /// <summary>
         /// Specifies if the <see cref="IRequest"/> has priority over other non-prioritized <see cref="IRequest">Requests</see>.
         /// </summary>
-        public RequestPriority Priority { get; set; }
+        RequestPriority Priority { get; init; }
 
         /// <summary>
-        /// Delays the start of the <see cref="IRequest"/> by a specified number of milliseconds on every start call.
+        /// Delays the start of the <see cref="IRequest"/> by a specified duration on every start call.
+        /// Mutable at runtime.
         /// </summary>
-        public TimeSpan? DeployDelay { get; set; }
+        TimeSpan? DeployDelay { get; set; }
 
         /// <summary>
         /// Sets the <see cref="IRequestHandler"/> for the <see cref="IRequest"/>.
         /// </summary>
-        public IRequestHandler? Handler { get; set; }
+        IRequestHandler? Handler { get; init; }
 
         /// <summary>
         /// Specifies the number of times the <see cref="IRequest"/> should be retried if it fails.
         /// </summary>
-        public byte NumberOfAttempts { get; set; }
+        byte NumberOfAttempts { get; init; }
 
         /// <summary>
         /// Specifies the delay duration before a new attempt is made if the <see cref="IRequest"/> fails.
         /// </summary>
-        public TimeSpan? DelayBetweenAttemps { get; set; }
+        TimeSpan? DelayBetweenAttempts { get; init; }
 
         /// <summary>
         /// A <see cref="System.Threading.CancellationToken"/> that the user can set to cancel the <see cref="IRequest"/>.
         /// </summary>
-        public CancellationToken? CancellationToken { get; set; }
+        CancellationToken CancellationToken { get; init; }
 
         /// <summary>
         /// Specifies a request that should be executed immediately after this request completes, bypassing the queue.
+        /// Mutable at runtime with validation.
         /// </summary>
         /// <remarks>
         /// The subsequent request supports auto-starting if enabled, but this behavior can be disabled if not desired.
         /// <br/>If the subsequent request is already running, it will not be started again.
         /// <br/>If the holding request fails, the subsequent request will be canceled and disposed.
         /// </remarks>
-        public IRequest? SubsequentRequest { get; set; }
-
-        /// <summary>
-        /// An event that will be triggered when the <see cref="IRequest"/> is cancelled.
-        /// </summary>
-        public Action<IRequest>? RequestCancelled { get; set; }
-
-        /// <summary>
-        /// An event that will be triggered when the <see cref="IRequest"/> is started.
-        /// </summary>
-        public Action<IRequest>? RequestStarted { get; set; }
-
-        /// <summary>
-        /// An event that will be triggered when the <see cref="IRequest"/> is completed.
-        /// </summary>
-        public Action<IRequest, TCompleted>? RequestCompleted { get; set; }
-
-        /// <summary>
-        /// An event that will be triggered when the <see cref="IRequest"/> fails.
-        /// </summary>
-        public Action<IRequest, TFailed>? RequestFailed { get; set; }
-
-        /// <summary>
-        /// An event that will be triggered when an exception occurs during the <see cref="IRequest"/> execution.
-        /// </summary>
-        public Action<IRequest, Exception>? RequestExceptionOccurred { get; set; }
+        IRequest? SubsequentRequest { get; set; }
     }
 }
