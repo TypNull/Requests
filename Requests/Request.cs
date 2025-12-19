@@ -553,7 +553,6 @@ namespace Requests
 
             _requestCts?.Dispose();
             _ctr.Dispose();
-            _completionSource.TrySetCanceled();
             Interlocked.Exchange(ref _pauseTcs, null)?.TrySetCanceled();
 
             GC.SuppressFinalize(this);
